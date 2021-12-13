@@ -1,25 +1,31 @@
-use data_encoding::HEXLOWER;
-use ring::digest::{Context, SHA256};
+use crate::ProofOfWork;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[derive(Clone)]
 pub struct Block {
     timestamp: i64,         // 区块时间戳
     pre_block_hash: String, // 上一区块的哈希值
     hash: String,           // 当前区块的哈希值
     data: String,           // 区块数据
+    nonce: i64,             // 计数器
 }
 
 impl Block {
     /// 新建一个区块
     pub fn new_block(pre_block_hash: String, data: String) -> Block {
-        let timestamp = current_timestamp();
-        let hash = caculate_hash(timestamp, pre_block_hash.clone(), data.clone());
-        Block {
-            timestamp,
+        let mut block = Block {
+            timestamp: current_timestamp(),
             pre_block_hash,
-            hash,
+            hash: String::new(),
             data,
-        }
+            nonce: 0,
+        };
+        // 挖矿计算哈希
+        let pow = ProofOfWork::new_proof_of_work(block.clone());
+        let (nonce, hash) = pow.run();
+        block.nonce = nonce;
+        block.hash = hash;
+        return block;
     }
 
     /// 生成创世块
@@ -52,19 +58,6 @@ fn current_timestamp() -> i64 {
         .as_millis() as i64
 }
 
-/// 计算区块哈希值
-fn caculate_hash(timestamp: i64, pre_block_hash: String, data: String) -> String {
-    let block_data = format!("{}{}{}", timestamp, pre_block_hash, data);
-    sha256_digest(block_data)
-}
-
-fn sha256_digest(data: String) -> String {
-    let mut context = Context::new(&SHA256);
-    context.update(data.as_bytes());
-    let digest = context.finish();
-    return HEXLOWER.encode(digest.as_ref());
-}
-
 #[cfg(test)]
 mod tests {
     use super::Block;
@@ -76,11 +69,5 @@ mod tests {
             String::from("ABC"),
         );
         println!("new block hash is {}", block.hash)
-    }
-
-    #[test]
-    fn test_sha256_digest() {
-        let digest = super::sha256_digest(String::from("hello"));
-        println!("SHA-256 digest is {}", digest)
     }
 }

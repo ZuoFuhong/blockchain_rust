@@ -9,3 +9,4 @@ edition = "2021"
 [dependencies]
 ring = "0.16.20"
 data-encoding = "2.3.2"
+num-bigint = "0.4.3"
