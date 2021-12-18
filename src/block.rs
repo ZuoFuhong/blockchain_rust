@@ -1,7 +1,9 @@
 use crate::ProofOfWork;
+use serde::{Deserialize, Serialize};
+use sled::IVec;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Block {
     timestamp: i64,         // 区块时间戳
     pre_block_hash: String, // 上一区块的哈希值
@@ -28,6 +30,11 @@ impl Block {
         return block;
     }
 
+    /// 从字节数组反序列化
+    pub fn deserialize(bytes: &[u8]) -> Block {
+        bincode::deserialize(bytes).unwrap()
+    }
+
     /// 生成创世块
     pub fn new_genesis_block() -> Block {
         return Block::new_block(String::new(), String::from("Genesis Block"));
@@ -50,6 +57,13 @@ impl Block {
     }
 }
 
+impl From<Block> for IVec {
+    fn from(b: Block) -> Self {
+        let bytes = bincode::serialize(&b).unwrap();
+        Self::from(bytes)
+    }
+}
+
 /// 获取当前时间戳，单位：ms
 fn current_timestamp() -> i64 {
     SystemTime::now()
@@ -69,5 +83,16 @@ mod tests {
             String::from("ABC"),
         );
         println!("new block hash is {}", block.hash)
+    }
+
+    #[test]
+    fn test_serialize() {
+        let block = Block::new_block(
+            String::from("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
+            String::from("ABC"),
+        );
+        let bytes = bincode::serialize(&block).unwrap();
+        let desc_block = Block::deserialize(&bytes[..]);
+        assert_eq!(block.data, desc_block.data)
     }
 }
