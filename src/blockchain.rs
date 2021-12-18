@@ -1,39 +1,106 @@
 use crate::Block;
-use std::borrow::Borrow;
+use sled::Db;
+use std::env::current_dir;
+
+const TIP_BLOCK_HASH_KEY: &str = "tip_block_hash";
 
 pub struct Blockchain {
-    blocks: Vec<Block>,
+    tip: String,
+    db: Db,
 }
 
 impl Blockchain {
     /// 创建区块链
     pub fn new_blockchain() -> Blockchain {
-        let mut blocks = Vec::new();
-        let genesis_block = Block::new_genesis_block();
-        blocks.push(genesis_block);
-        Blockchain { blocks }
+        let db = sled::open(current_dir().unwrap().join("data")).unwrap();
+        let data = db.get(TIP_BLOCK_HASH_KEY).unwrap();
+        let tip;
+        if data.is_none() {
+            let block = Block::new_genesis_block();
+            let block_hash = block.get_hash();
+            let _ = db.insert(block_hash.clone(), block);
+            let _ = db.insert(TIP_BLOCK_HASH_KEY, block_hash.as_bytes().to_vec());
+            tip = block_hash;
+        } else {
+            tip = String::from_utf8(data.unwrap().to_vec()).unwrap();
+        }
+        Blockchain { tip, db }
     }
 
     /// 增加区块
     pub fn add_block(&mut self, data: String) {
-        let pre_block_hash = self.blocks[self.blocks.len() - 1].borrow().get_hash();
-        let new_block = Block::new_block(pre_block_hash, data);
-        self.blocks.push(new_block);
+        let block = Block::new_block(self.tip.clone(), data);
+        let block_hash = block.get_hash();
+        let _ = self.db.insert(block_hash.clone(), block);
+        let _ = self
+            .db
+            .insert(TIP_BLOCK_HASH_KEY, block_hash.as_bytes().to_vec());
+        self.tip = block_hash;
+    }
+
+    pub fn iterator(&self) -> BlockchainIterator {
+        BlockchainIterator::new(self.tip.clone(), self.db.clone())
+    }
+}
+
+pub struct BlockchainIterator {
+    db: Db,
+    current_hash: String,
+}
+
+impl BlockchainIterator {
+    fn new(tip: String, db: Db) -> BlockchainIterator {
+        BlockchainIterator {
+            current_hash: tip,
+            db,
+        }
+    }
+
+    pub fn next(&mut self) -> Option<Block> {
+        let data = self.db.get(self.current_hash.clone()).unwrap();
+        if data.is_none() {
+            return None;
+        }
+        let block = Block::deserialize(data.unwrap().to_vec().as_slice());
+        self.current_hash = block.get_pre_block_hash().clone();
+        return Some(block);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::env::current_dir;
 
     #[test]
-    pub fn test_blockchain() {
+    fn test_blockchain() {
         let mut blockchain = super::Blockchain::new_blockchain();
         blockchain.add_block(String::from("Send 1 BTC to Mars"));
-        for block in blockchain.blocks {
+
+        let mut iterator = blockchain.iterator();
+        loop {
+            let block = iterator.next();
+            if block.is_none() {
+                break;
+            }
+            let block = block.unwrap();
             println!("Pre block hash: {}", block.get_pre_block_hash());
             println!("Cur block hash: {}", block.get_hash());
             println!("Data: {}", block.get_data());
             println!("Timestamp: {}\n", block.get_timestamp());
+        }
+    }
+
+    #[test]
+    fn test_sled() {
+        let db = sled::open(current_dir().unwrap().join("data")).unwrap();
+        let ret = db.get("name").unwrap();
+        if ret.is_none() {
+            println!("Not found")
+        }
+        let _ = db.insert("name", "mars");
+        if let Some(v) = db.get("name").unwrap() {
+            println!("data = {}", String::from_utf8(v.to_vec()).unwrap());
+            let _ = db.remove("name");
         }
     }
 }
