@@ -75,19 +75,6 @@ mod tests {
     fn test_blockchain() {
         let mut blockchain = super::Blockchain::new_blockchain();
         blockchain.add_block(String::from("Send 1 BTC to Mars"));
-
-        let mut iterator = blockchain.iterator();
-        loop {
-            let block = iterator.next();
-            if block.is_none() {
-                break;
-            }
-            let block = block.unwrap();
-            println!("Pre block hash: {}", block.get_pre_block_hash());
-            println!("Cur block hash: {}", block.get_hash());
-            println!("Data: {}", block.get_data());
-            println!("Timestamp: {}\n", block.get_timestamp());
-        }
     }
 
     #[test]
