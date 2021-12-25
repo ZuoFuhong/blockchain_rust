@@ -10,6 +10,13 @@ use proof_of_work::ProofOfWork;
 mod transaction;
 pub use transaction::Transaction;
 
+mod wallet;
+pub use wallet::Wallet;
+
 mod utils;
+use utils::base58_decode;
+use utils::base58_encode;
 use utils::current_timestamp;
+use utils::new_key_pair;
+use utils::ripemd160_digest;
 use utils::sha256_digest;

@@ -77,17 +77,6 @@ impl From<Block> for IVec {
 mod tests {
     use super::Block;
     use crate::Transaction;
-    use data_encoding::HEXLOWER;
-
-    #[test]
-    fn test_sha256_digest() {
-        // sha256 会产生256位的哈希值，作为消息的摘要。这个摘要相当于一个32个字节的数组，通常有一个长度为64的16进制
-        // 字符串表示，其中一个字节等于8位，一个16进制的字符长度为4位。
-        let digest = crate::sha256_digest("hello".as_bytes());
-        // 16进制编码输出
-        let hex_digest = HEXLOWER.encode(digest.as_slice());
-        println!("SHA-256 digest is {}", hex_digest)
-    }
 
     #[test]
     fn test_new_block() {
