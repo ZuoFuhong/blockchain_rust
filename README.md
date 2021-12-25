@@ -148,7 +148,7 @@ type TXInput struct {
 
 > 在比特币中，第一笔 coinbase 交易包含了如下信息：“The Times 03/Jan/2009 Chancellor on brink of second bailout for banks”。`
 
-`subsidy`是挖出新块的奖励金。在比特币中，实际并没有存储这个数字，而是基于区块总数进行计算而得：区块总数除以 210000 就是`subsidy`。
+`SUBSIDY`是挖出新块的奖励金。在比特币中，实际并没有存储这个数字，而是基于区块总数进行计算而得：区块总数除以 210000 就是`SUBSIDY`。
 挖出创世块的奖励是 50 BTC，每挖出 210000 个块后，奖励减半。在我们的实现中，这个奖励值将会是一个常量（至少目前是）。
 
 

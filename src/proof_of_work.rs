@@ -1,7 +1,6 @@
 use crate::Block;
 use data_encoding::HEXLOWER;
 use num_bigint::{BigInt, Sign};
-use ring::digest::{Context, SHA256};
 use std::borrow::Borrow;
 use std::ops::ShlAssign;
 
@@ -26,11 +25,11 @@ impl ProofOfWork {
     /// 工作量证明用到的数据
     fn prepare_data(&self, nonce: i64) -> Vec<u8> {
         let pre_block_hash = self.block.get_pre_block_hash();
-        let data = self.block.get_data();
+        let transactions_hash = self.block.hash_transactions();
         let timestamp = self.block.get_timestamp();
         let mut data_bytes = vec![];
         data_bytes.extend(pre_block_hash.as_bytes());
-        data_bytes.extend(data.as_bytes());
+        data_bytes.extend(transactions_hash);
         data_bytes.extend(timestamp.to_be_bytes());
         data_bytes.extend(TARGET_BITS.to_be_bytes());
         data_bytes.extend(nonce.to_be_bytes());
@@ -41,10 +40,10 @@ impl ProofOfWork {
     pub fn run(&self) -> (i64, String) {
         let mut nonce = 0;
         let mut hash = Vec::new();
-        println!("Mining the block containing {}", self.block.get_data());
+        println!("Mining the block");
         while nonce < MAX_NONCE {
             let data = self.prepare_data(nonce);
-            hash = sha256_digest(data.as_slice());
+            hash = crate::sha256_digest(data.as_slice());
             let hash_int = BigInt::from_bytes_be(Sign::Plus, hash.as_slice());
 
             // 1.在比特币中，当一个块被挖出来以后，“target bits” 代表了区块头里存储的难度，也就是开头有多少个 0。
@@ -65,29 +64,12 @@ impl ProofOfWork {
     }
 }
 
-fn sha256_digest(data: &[u8]) -> Vec<u8> {
-    let mut context = Context::new(&SHA256);
-    context.update(data);
-    let digest = context.finish();
-    digest.as_ref().to_vec()
-}
-
 #[cfg(test)]
 mod tests {
     use super::TARGET_BITS;
     use data_encoding::HEXLOWER;
     use num_bigint::BigInt;
     use std::ops::ShlAssign;
-
-    #[test]
-    fn test_sha256_digest() {
-        // sha256 会产生256位的哈希值，作为消息的摘要。这个摘要相当于一个32个字节的数组，通常有一个长度为64的16进制
-        // 字符串表示，其中一个字节等于8位，一个16进制的字符长度为4位。
-        let digest = super::sha256_digest("hello".as_bytes());
-        // 16进制编码输出
-        let hex_digest = HEXLOWER.encode(digest.as_slice());
-        println!("SHA-256 digest is {}", hex_digest)
-    }
 
     #[test]
     fn test_bigint_from_bytes() {
