@@ -13,10 +13,10 @@ pub struct Block {
 
 impl Block {
     /// 新建一个区块
-    pub fn new_block(pre_block_hash: String, transactions: Vec<Transaction>) -> Block {
+    pub fn new_block(pre_block_hash: &str, transactions: Vec<Transaction>) -> Block {
         let mut block = Block {
             timestamp: crate::current_timestamp(),
-            pre_block_hash,
+            pre_block_hash: String::from(pre_block_hash),
             hash: String::new(),
             transactions,
             nonce: 0,
@@ -36,7 +36,7 @@ impl Block {
 
     /// 生成创世块
     pub fn generate_genesis_block(transaction: Transaction) -> Block {
-        return Block::new_block(String::from("None"), vec![transaction]);
+        return Block::new_block("None", vec![transaction]);
     }
 
     /// 计算区块里所有交易的哈希
@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn test_new_block() {
         let block = Block::new_block(
-            String::from("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
             vec![],
         );
         println!("new block hash is {}", block.hash)
@@ -89,10 +89,9 @@ mod tests {
 
     #[test]
     fn test_block_serialize() {
-        let tx =
-            Transaction::new_coinbase_tx(String::from("Genesis"), String::from("Genesis data"));
+        let tx = Transaction::new_coinbase_tx("Genesis");
         let block = Block::new_block(
-            String::from("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
             vec![tx],
         );
         let bytes = bincode::serialize(&block).unwrap();

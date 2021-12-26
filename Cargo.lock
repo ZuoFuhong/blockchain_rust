@@ -54,6 +54,7 @@ dependencies = [
  "num-bigint",
  "ring",
  "rust-crypto",
+ "rustc-serialize",
  "serde",
  "sled",
  "structopt",

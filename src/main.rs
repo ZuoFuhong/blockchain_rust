@@ -1,4 +1,7 @@
-use blockchain_rust::{Blockchain, Transaction};
+use blockchain_rust::{
+    calc_address, hash_pub_key, utils, validate_address, Blockchain, Transaction, Wallets,
+    ADDRESS_CHECK_SUM_LEN,
+};
 use data_encoding::HEXLOWER;
 use structopt::StructOpt;
 
@@ -13,6 +16,8 @@ struct Opt {
 enum Command {
     #[structopt(name = "createblockchain", about = "Create a new blockchain")]
     Createblockchain,
+    #[structopt(name = "createwallet", about = "Create a new wallet")]
+    Createwallet,
     #[structopt(
         name = "getBalance",
         about = "Get the wallet balance of the target address"
@@ -21,13 +26,15 @@ enum Command {
         #[structopt(name = "address", help = "The wallet address")]
         address: String,
     },
+    #[structopt(name = "listaddresses", about = "Print local wallet addres")]
+    ListAddresses,
     #[structopt(name = "send", about = "Add new block to chain")]
     Send {
-        #[structopt(name = "from", help = "The string value of the block data")]
+        #[structopt(name = "from", help = "Source wallet address")]
         from: String,
-        #[structopt(name = "to", help = "The string value of the block data")]
+        #[structopt(name = "to", help = "Destination wallet address")]
         to: String,
-        #[structopt(name = "data", help = "The string value of the block data")]
+        #[structopt(name = "amount", help = "Amount to send")]
         amount: i32,
     },
     #[structopt(name = "printchain", about = "Print blockchain all block")]
@@ -43,21 +50,41 @@ fn main() {
             let _ = Blockchain::new_blockchain();
             println!("Done!");
         }
+        Command::Createwallet => {
+            let mut wallet = Wallets::new();
+            let address = wallet.create_wallet();
+            wallet.save_to_file();
+            println!("Your new address: {}", address)
+        }
         Command::GetBalance { address } => {
             let blockchain = Blockchain::new_blockchain();
-            let utxos = blockchain.find_utxo(address.as_str());
+            let payload = utils::base58_decode(address.as_str());
+            let pub_key_hash = payload[1..payload.len() - ADDRESS_CHECK_SUM_LEN].to_vec();
+            let utxos = blockchain.find_utxo(pub_key_hash.as_slice());
             let mut balance = 0;
             for utxo in utxos {
                 balance += utxo.get_value();
             }
             println!("Balance of {}: {}", address, balance);
         }
+        Command::ListAddresses => {
+            let wallets = Wallets::new();
+            for address in wallets.get_addresses() {
+                println!("{}", address)
+            }
+        }
         Command::Send { from, to, amount } => {
+            if !validate_address(from.as_str()) {
+                panic!("ERROR: Sender address is not valid")
+            }
+            if !validate_address(to.as_str()) {
+                panic!("ERROR: Recipient address is not valid")
+            }
             let mut blockchain = Blockchain::new_blockchain();
-            let unspent_transactions = blockchain.find_unspent_transactions(from.as_str());
             let transaction =
-                Transaction::new_utxo_transaction(from, to, amount, unspent_transactions);
+                Transaction::new_utxo_transaction(from.as_str(), to.as_str(), amount, &blockchain);
             blockchain.mine_block(vec![transaction]);
+            println!("Success!")
         }
         Command::Printchain => {
             let mut block_iterator = Blockchain::new_blockchain().iterator();
@@ -72,20 +99,24 @@ fn main() {
                 for tx in block.get_transactions() {
                     for input in tx.get_vin() {
                         let txid_hex = HEXLOWER.encode(input.get_txid().as_slice());
+                        let pub_key_hash = hash_pub_key(input.get_pub_key().as_slice());
+                        let address = calc_address(pub_key_hash.as_slice());
                         println!(
-                            "Transaction input txid = {}, vout = {}, script_sig = {}",
+                            "Transaction input txid = {}, vout = {}, from = {}",
                             txid_hex,
                             input.get_vout(),
-                            input.get_script_sig()
+                            address,
                         )
                     }
                     let cur_txid_hex = HEXLOWER.encode(tx.get_id().as_slice());
                     for output in tx.get_vout() {
+                        let pub_key_hash = output.get_pub_key_hash();
+                        let address = calc_address(pub_key_hash.as_slice());
                         println!(
-                            "Transaction output current txid = {}, value = {}, script_pub_key = {}",
+                            "Transaction output current txid = {}, value = {}, to = {}",
                             cur_txid_hex,
                             output.get_value(),
-                            output.get_script_pub_key()
+                            address,
                         )
                     }
                 }

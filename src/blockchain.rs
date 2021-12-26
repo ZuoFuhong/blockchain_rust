@@ -1,14 +1,11 @@
 use crate::transaction::TXOutput;
-use crate::{Block, Transaction};
+use crate::{Block, Transaction, Wallets};
 use data_encoding::HEXLOWER;
 use sled::Db;
 use std::collections::HashMap;
 use std::env::current_dir;
 
 const TIP_BLOCK_HASH_KEY: &str = "tip_block_hash";
-const GENESIS_ADDRESS: &str = "Genesis";
-const GENESIS_COINBASE_DATA: &str =
-    "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks";
 
 pub struct Blockchain {
     tip: String,
@@ -22,10 +19,13 @@ impl Blockchain {
         let data = db.get(TIP_BLOCK_HASH_KEY).unwrap();
         let tip;
         if data.is_none() {
-            let coinbase_tx = Transaction::new_coinbase_tx(
-                String::from(GENESIS_ADDRESS),
-                String::from(GENESIS_COINBASE_DATA),
-            );
+            // 本地没有联网，手动同步创世块的钱包
+            let mut wallets = Wallets::new();
+            let genesis_address = wallets.create_wallet();
+            wallets.save_to_file();
+
+            // 创世块
+            let coinbase_tx = Transaction::new_coinbase_tx(genesis_address.as_str());
             let block = Block::generate_genesis_block(coinbase_tx);
             let block_hash = block.get_hash();
             let _ = db.insert(block_hash.clone(), block);
@@ -39,7 +39,8 @@ impl Blockchain {
 
     /// 挖矿新区块
     pub fn mine_block(&mut self, transactions: Vec<Transaction>) {
-        let block = Block::new_block(self.tip.clone(), transactions);
+        // Todo: 验证交易 TXInput 的签名
+        let block = Block::new_block(self.tip.as_str(), transactions);
         let block_hash = block.get_hash();
         let _ = self.db.insert(block_hash.clone(), block);
         let _ = self
@@ -52,11 +53,44 @@ impl Blockchain {
         BlockchainIterator::new(self.tip.clone(), self.db.clone())
     }
 
+    /// 找到足够的未花费输出
+    pub fn find_spendable_outputs(
+        &self,
+        pub_key_hash: &[u8],
+        amount: i32,
+    ) -> (i32, HashMap<String, Vec<i32>>) {
+        let unspent_transaction = self.find_unspent_transactions(pub_key_hash);
+
+        let mut accumulated = 0;
+        let mut unspent_outputs: HashMap<String, Vec<i32>> = HashMap::new();
+        'outer: for tx in &unspent_transaction {
+            let txid_hex = HEXLOWER.encode(tx.get_id().as_slice());
+            for idx in 0..tx.get_vout().len() {
+                let txout = tx.get_vout()[idx].clone();
+                if txout.is_locked_with_key(pub_key_hash) {
+                    accumulated += txout.get_value();
+                    if unspent_outputs.contains_key(txid_hex.as_str()) {
+                        unspent_outputs
+                            .get_mut(txid_hex.as_str())
+                            .unwrap()
+                            .push(idx as i32);
+                    } else {
+                        unspent_outputs.insert(txid_hex.clone(), vec![idx as i32]);
+                    }
+                    if accumulated >= amount {
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        return (accumulated, unspent_outputs);
+    }
+
     /// 找到未花费支出的交易
     /// 1.有一些输出并没有被关联到某个输入上，如 coinbase 挖矿奖励。
     /// 2.一笔交易的输入可以引用之前多笔交易的输出。
     /// 3.一个输入必须引用一个输出。
-    pub fn find_unspent_transactions(&self, address: &str) -> Vec<Transaction> {
+    fn find_unspent_transactions(&self, pub_key_hash: &[u8]) -> Vec<Transaction> {
         let mut unspent_txs = vec![];
         let mut spent_txos: HashMap<String, Vec<i32>> = HashMap::new();
 
@@ -83,7 +117,7 @@ impl Blockchain {
                             }
                         }
                     }
-                    if txout.can_be_unlocked_with(address) {
+                    if txout.is_locked_with_key(pub_key_hash) {
                         unspent_txs.push(tx.clone())
                     }
                 }
@@ -92,7 +126,7 @@ impl Blockchain {
                 }
                 // 在输入中查找已花费输出
                 for txin in tx.get_vin() {
-                    if txin.can_unlock_output_with(address) {
+                    if txin.uses_key(pub_key_hash) {
                         let txid_hex = HEXLOWER.encode(txin.get_txid().as_slice());
                         if spent_txos.contains_key(txid_hex.as_str()) {
                             let outs = spent_txos.get_mut(txid_hex.as_str()).unwrap();
@@ -107,12 +141,12 @@ impl Blockchain {
         return unspent_txs;
     }
 
-    pub fn find_utxo(&self, address: &str) -> Vec<TXOutput> {
-        let transactions = self.find_unspent_transactions(address);
+    pub fn find_utxo(&self, pub_key_hash: &[u8]) -> Vec<TXOutput> {
+        let transactions = self.find_unspent_transactions(pub_key_hash);
         let mut utxos = vec![];
         for transaction in transactions {
             for out in transaction.get_vout() {
-                if out.can_be_unlocked_with(address) {
+                if out.is_locked_with_key(pub_key_hash) {
                     utxos.push(out);
                 }
             }
@@ -159,14 +193,14 @@ mod tests {
     fn test_blockchain() {
         let mut blockchain = super::Blockchain::new_blockchain();
         // 创建一个 coinbase 交易
-        let transaction = Transaction::new_coinbase_tx(String::from("mars"), String::from("miko"));
+        let transaction = Transaction::new_coinbase_tx("mars");
         blockchain.mine_block(vec![transaction]);
     }
 
     #[test]
     fn test_find_unspent_transactions() {
         let blockchain = super::Blockchain::new_blockchain();
-        let transactions = blockchain.find_unspent_transactions("mars");
+        let transactions = blockchain.find_unspent_transactions("mars".as_bytes());
         for transaction in transactions {
             let txid_hex = HEXLOWER.encode(transaction.get_id().as_slice());
             println!("txid = {}", txid_hex)

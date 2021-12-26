@@ -1,15 +1,23 @@
-const VERSION: u8 = 0x00;
-const ADDRESS_CHECK_SUM_LEN: usize = 4;
+use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+use serde::{Deserialize, Serialize};
 
+const VERSION: u8 = 0x00;
+pub const ADDRESS_CHECK_SUM_LEN: usize = 4;
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Wallet {
-    public_key: Vec<u8>,
+    pkcs8: Vec<u8>,
+    public_key: Vec<u8>, // 原生的公钥
 }
 
 impl Wallet {
     /// 创建一个钱包
-    pub fn new_wallet() -> Wallet {
-        let public_key = crate::new_key_pair();
-        Wallet { public_key }
+    pub fn new() -> Wallet {
+        let pkcs8 = crate::new_key_pair();
+        let key_pair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref()).unwrap();
+        let public_key = key_pair.public_key().as_ref().to_vec();
+        Wallet { pkcs8, public_key }
     }
 
     /// 获取钱包地址
@@ -27,9 +35,14 @@ impl Wallet {
         // version + pub_key_hash + checksum
         crate::base58_encode(payload.as_slice())
     }
+
+    pub fn get_public_key(&self) -> Vec<u8> {
+        self.public_key.clone()
+    }
 }
 
-fn hash_pub_key(pub_key: &[u8]) -> Vec<u8> {
+/// 计算公钥哈希
+pub fn hash_pub_key(pub_key: &[u8]) -> Vec<u8> {
     let pub_key_sha256 = crate::sha256_digest(pub_key);
     crate::ripemd160_digest(pub_key_sha256.as_slice())
 }
@@ -42,8 +55,8 @@ fn checksum(payload: &[u8]) -> Vec<u8> {
 }
 
 /// 验证地址有效
-fn validate_address(address: &str) -> bool {
-    let payload = crate::base58_decode(address.as_bytes());
+pub fn validate_address(address: &str) -> bool {
+    let payload = crate::base58_decode(address);
     let actual_checksum = payload[payload.len() - ADDRESS_CHECK_SUM_LEN..].to_vec();
     let version = payload[0];
     let pub_key_hash = payload[1..payload.len() - ADDRESS_CHECK_SUM_LEN].to_vec();
@@ -55,13 +68,23 @@ fn validate_address(address: &str) -> bool {
     actual_checksum.eq(target_checksum.as_slice())
 }
 
+/// 通过公钥哈希计算地址
+pub fn calc_address(pub_hash_key: &[u8]) -> String {
+    let mut payload: Vec<u8> = vec![];
+    payload.push(VERSION);
+    payload.extend(pub_hash_key);
+    let checksum = checksum(payload.as_slice());
+    payload.extend(checksum.as_slice());
+    crate::base58_encode(payload.as_slice())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::wallet::validate_address;
 
     #[test]
     pub fn test_get_address() {
-        let wallet = crate::Wallet::new_wallet();
+        let wallet = crate::Wallet::new();
         let address = wallet.get_address();
         println!("The address is {}", address)
     }

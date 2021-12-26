@@ -1,7 +1,7 @@
 use crypto::digest::Digest;
 use ring::digest::{Context, SHA256};
 use ring::rand::SystemRandom;
-use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use std::iter::repeat;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -36,7 +36,7 @@ pub fn base58_encode(data: &[u8]) -> String {
 }
 
 /// base58 解码
-pub fn base58_decode(data: &[u8]) -> Vec<u8> {
+pub fn base58_decode(data: &str) -> Vec<u8> {
     bs58::decode(data).into_vec().unwrap()
 }
 
@@ -44,16 +44,15 @@ pub fn base58_decode(data: &[u8]) -> Vec<u8> {
 pub fn new_key_pair() -> Vec<u8> {
     let rng = SystemRandom::new();
     let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
-    let key_pair =
-        EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref()).unwrap();
-    key_pair.public_key().as_ref().to_vec()
+    pkcs8.as_ref().to_vec()
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::new_key_pair;
     use data_encoding::HEXLOWER;
-    use ring::rand::SystemRandom;
     use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+    use rustc_serialize::hex::ToHex;
 
     #[test]
     fn test_sha256_digest() {
@@ -78,19 +77,17 @@ mod tests {
         let sign = "dd2324928f0552d4f4c6e57d9e5f6009ab085d85";
         let base58_sign = crate::base58_encode(sign.as_bytes());
 
-        let decode_bytes = crate::base58_decode(base58_sign.as_bytes());
+        let decode_bytes = crate::base58_decode(base58_sign.as_str());
         let decode_str = String::from_utf8(decode_bytes).unwrap();
         assert_eq!(sign, decode_str.as_str());
     }
 
     #[test]
-    fn test_ecdsa() {
-        let rng = SystemRandom::new();
-        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
+    fn test_ecdsa_key_pair() {
+        let pkcs8 = new_key_pair();
         let key_pair =
             EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref()).unwrap();
-        for b in key_pair.public_key().as_ref() {
-            print!("{:02x}", *b);
-        }
+        let public_key_hex = key_pair.public_key().as_ref().to_hex();
+        println!("{}", public_key_hex)
     }
 }
