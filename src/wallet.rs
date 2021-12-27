@@ -39,6 +39,10 @@ impl Wallet {
     pub fn get_public_key(&self) -> Vec<u8> {
         self.public_key.clone()
     }
+
+    pub fn get_pkcs8(&self) -> Vec<u8> {
+        self.pkcs8.clone()
+    }
 }
 
 /// 计算公钥哈希

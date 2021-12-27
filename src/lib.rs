@@ -24,6 +24,8 @@ pub mod utils;
 use utils::base58_decode;
 use utils::base58_encode;
 use utils::current_timestamp;
+use utils::ecdsa_p256_sha256_sign_digest;
+use utils::ecdsa_p256_sha256_sign_verify;
 use utils::new_key_pair;
 use utils::ripemd160_digest;
 use utils::sha256_digest;

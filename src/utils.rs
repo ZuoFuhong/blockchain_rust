@@ -1,7 +1,7 @@
 use crypto::digest::Digest;
 use ring::digest::{Context, SHA256};
 use ring::rand::SystemRandom;
-use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED, ECDSA_P256_SHA256_FIXED_SIGNING};
 use std::iter::repeat;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -47,12 +47,26 @@ pub fn new_key_pair() -> Vec<u8> {
     pkcs8.as_ref().to_vec()
 }
 
+/// ECDSA P256 SHA256 签名
+pub fn ecdsa_p256_sha256_sign_digest(pkcs8: &[u8], message: &[u8]) -> Vec<u8> {
+    let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8).unwrap();
+    let rng = ring::rand::SystemRandom::new();
+    key_pair.sign(&rng, message).unwrap().as_ref().to_vec()
+}
+
+/// ECDSA P256 SHA256 签名验证
+pub fn ecdsa_p256_sha256_sign_verify(public_key: &[u8], signature: &[u8], message: &[u8]) -> bool {
+    let peer_public_key =
+        ring::signature::UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, public_key);
+    let result = peer_public_key.verify(message, signature.as_ref());
+    result.is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::new_key_pair;
     use data_encoding::HEXLOWER;
     use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
-    use rustc_serialize::hex::ToHex;
 
     #[test]
     fn test_sha256_digest() {
@@ -83,11 +97,18 @@ mod tests {
     }
 
     #[test]
-    fn test_ecdsa_key_pair() {
+    fn test_ecdsa_sign_and_verify() {
+        const MESSAGE: &[u8] = b"hello, world";
         let pkcs8 = new_key_pair();
+        // 签名
+        let signature = crate::ecdsa_p256_sha256_sign_digest(pkcs8.as_slice(), MESSAGE);
+
+        // 签名验证
         let key_pair =
-            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref()).unwrap();
-        let public_key_hex = key_pair.public_key().as_ref().to_hex();
-        println!("{}", public_key_hex)
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_slice()).unwrap();
+        let public_key = key_pair.public_key().as_ref();
+        let verify =
+            crate::ecdsa_p256_sha256_sign_verify(public_key, signature.as_slice(), MESSAGE);
+        assert!(verify)
     }
 }

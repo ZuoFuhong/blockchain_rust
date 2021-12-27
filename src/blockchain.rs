@@ -39,7 +39,11 @@ impl Blockchain {
 
     /// 挖矿新区块
     pub fn mine_block(&mut self, transactions: Vec<Transaction>) {
-        // Todo: 验证交易 TXInput 的签名
+        for trasaction in &transactions {
+            if trasaction.verify(self) == false {
+                panic!("ERROR: Invalid transaction")
+            }
+        }
         let block = Block::new_block(self.tip.as_str(), transactions);
         let block_hash = block.get_hash();
         let _ = self.db.insert(block_hash.clone(), block);
@@ -58,11 +62,11 @@ impl Blockchain {
         &self,
         pub_key_hash: &[u8],
         amount: i32,
-    ) -> (i32, HashMap<String, Vec<i32>>) {
+    ) -> (i32, HashMap<String, Vec<usize>>) {
         let unspent_transaction = self.find_unspent_transactions(pub_key_hash);
 
         let mut accumulated = 0;
-        let mut unspent_outputs: HashMap<String, Vec<i32>> = HashMap::new();
+        let mut unspent_outputs: HashMap<String, Vec<usize>> = HashMap::new();
         'outer: for tx in &unspent_transaction {
             let txid_hex = HEXLOWER.encode(tx.get_id().as_slice());
             for idx in 0..tx.get_vout().len() {
@@ -73,9 +77,9 @@ impl Blockchain {
                         unspent_outputs
                             .get_mut(txid_hex.as_str())
                             .unwrap()
-                            .push(idx as i32);
+                            .push(idx);
                     } else {
-                        unspent_outputs.insert(txid_hex.clone(), vec![idx as i32]);
+                        unspent_outputs.insert(txid_hex.clone(), vec![idx]);
                     }
                     if accumulated >= amount {
                         break 'outer;
@@ -92,7 +96,7 @@ impl Blockchain {
     /// 3.一个输入必须引用一个输出。
     fn find_unspent_transactions(&self, pub_key_hash: &[u8]) -> Vec<Transaction> {
         let mut unspent_txs = vec![];
-        let mut spent_txos: HashMap<String, Vec<i32>> = HashMap::new();
+        let mut spent_txos: HashMap<String, Vec<usize>> = HashMap::new();
 
         let mut block_iterator = self.iterator();
         loop {
@@ -112,7 +116,7 @@ impl Blockchain {
                     if spent_txos.contains_key(txid_hex.as_str()) {
                         let outs = spent_txos.get(txid_hex.as_str()).unwrap();
                         for out in outs {
-                            if out.eq(&(idx as i32)) {
+                            if out.eq(&idx) {
                                 continue 'outer;
                             }
                         }
@@ -152,6 +156,24 @@ impl Blockchain {
             }
         }
         return utxos;
+    }
+
+    /// 从区块链中查找交易
+    pub fn find_transaction(&self, txid: &[u8]) -> Option<Transaction> {
+        let mut iterator = self.iterator();
+        loop {
+            let option = iterator.next();
+            if option.is_none() {
+                break;
+            }
+            let block = option.unwrap();
+            for transaction in &block.get_transactions() {
+                if txid.eq(transaction.get_id().as_slice()) {
+                    return Some(transaction.clone());
+                }
+            }
+        }
+        None
     }
 
     pub fn clear_data(&self) {
@@ -205,6 +227,13 @@ mod tests {
             let txid_hex = HEXLOWER.encode(transaction.get_id().as_slice());
             println!("txid = {}", txid_hex)
         }
+    }
+
+    #[test]
+    fn test_find_transaction() {
+        let blockchain = super::Blockchain::new_blockchain();
+        let trasaction = blockchain.find_transaction("12345".as_bytes());
+        assert!(trasaction.is_none())
     }
 
     #[test]

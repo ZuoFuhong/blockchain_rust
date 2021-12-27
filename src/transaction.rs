@@ -10,14 +10,14 @@ const SUBSIDY: i32 = 10;
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct TXInput {
     txid: Vec<u8>,      // 一个交易输入引用了前一笔交易的一个输出，ID表明是之前的哪一笔交易
-    vout: i32,          // 输出的索引
+    vout: usize,        // 输出的索引
     signature: Vec<u8>, // 签名
     pub_key: Vec<u8>,   // 原生的公钥
 }
 
 impl TXInput {
     /// 创建一个输入
-    pub fn new(txid: Vec<u8>, vout: i32) -> TXInput {
+    pub fn new(txid: Vec<u8>, vout: usize) -> TXInput {
         TXInput {
             txid,
             vout,
@@ -30,7 +30,7 @@ impl TXInput {
         self.txid.clone()
     }
 
-    pub fn get_vout(&self) -> i32 {
+    pub fn get_vout(&self) -> usize {
         self.vout
     }
 
@@ -100,7 +100,7 @@ impl Transaction {
             vin: vec![txin],
             vout: vec![txout],
         };
-        tx.set_id();
+        tx.id = tx.hash();
         return tx;
     }
 
@@ -150,13 +150,13 @@ impl Transaction {
             vout: outputs,
         };
         // 生成交易ID
-        tx.set_id();
-        // Todo: 交易 TXInput 生成签名
+        tx.id = tx.hash();
+        // 5.交易中的 TXInput 签名
+        tx.sign(blockchain, wallet.get_pkcs8());
         return tx;
     }
 
     /// 创建一个修剪后的交易副本
-    #[allow(dead_code)]
     fn trimmed_copy(&self) -> Transaction {
         let mut inputs = vec![];
         let mut outputs = vec![];
@@ -175,23 +175,74 @@ impl Transaction {
     }
 
     /// 对交易的每个输入进行签名
-    #[allow(dead_code)]
-    fn sign(&self) {}
+    fn sign(&mut self, blockchain: &Blockchain, pkcs8: Vec<u8>) {
+        let mut tx_copy = self.trimmed_copy();
+
+        for (idx, vin) in self.vin.iter_mut().enumerate() {
+            // 查找输入引用的交易
+            let prev_tx_option = blockchain.find_transaction(vin.get_txid().as_slice());
+            if prev_tx_option.is_none() {
+                panic!("ERROR: Previous transaction is not correct")
+            }
+            let prev_tx = prev_tx_option.unwrap();
+            tx_copy.vin[idx].signature = vec![];
+            tx_copy.vin[idx].pub_key = prev_tx.vout[vin.vout].pub_key_hash.clone();
+            tx_copy.id = tx_copy.hash();
+            tx_copy.vin[idx].pub_key = vec![];
+
+            // 使用私钥对数据签名
+            let tx_bytes = bincode::serialize(&tx_copy).expect("unable to serialize transaction");
+            let signature =
+                crate::ecdsa_p256_sha256_sign_digest(pkcs8.as_slice(), tx_bytes.as_slice());
+            vin.signature = signature;
+        }
+    }
 
     /// 对交易的每个输入进行签名验证
-    #[allow(dead_code)]
-    fn verify(&self) -> bool {
+    pub fn verify(&self, blockchain: &Blockchain) -> bool {
+        if self.is_coinbase() {
+            return true;
+        }
+        let mut tx_copy = self.trimmed_copy();
+        for (idx, vin) in self.vin.iter().enumerate() {
+            let prev_tx_option = blockchain.find_transaction(vin.get_txid().as_slice());
+            if prev_tx_option.is_none() {
+                panic!("ERROR: Previous transaction is not correct")
+            }
+            let prev_tx = prev_tx_option.unwrap();
+            tx_copy.vin[idx].signature = vec![];
+            tx_copy.vin[idx].pub_key = prev_tx.vout[vin.vout].pub_key_hash.clone();
+            tx_copy.id = tx_copy.hash();
+            tx_copy.vin[idx].pub_key = vec![];
+
+            // 使用公钥验证签名
+            let tx_bytes = bincode::serialize(&tx_copy).expect("unable to serialize transaction");
+            let verify = crate::ecdsa_p256_sha256_sign_verify(
+                vin.pub_key.as_slice(),
+                vin.signature.as_slice(),
+                tx_bytes.as_slice(),
+            );
+            if !verify {
+                return false;
+            }
+        }
         true
     }
 
     /// 判断是否是 coinbase 交易
     pub fn is_coinbase(&self) -> bool {
-        return self.vin.len() == 1 && self.vin[0].txid.len() == 0 && self.vin[0].vout == -1;
+        return self.vin.len() == 1 && self.vin[0].txid.len() == 0 && self.vin[0].vout == 0;
     }
 
-    fn set_id(&mut self) {
-        let data = bincode::serialize(self).unwrap();
-        self.id = crate::sha256_digest(data.as_slice());
+    /// 生成交易的哈希
+    fn hash(&mut self) -> Vec<u8> {
+        let tx_copy = Transaction {
+            id: vec![],
+            vin: self.vin.clone(),
+            vout: self.vout.clone(),
+        };
+        let data = bincode::serialize(&tx_copy).unwrap();
+        crate::sha256_digest(data.as_slice())
     }
 
     pub fn get_id(&self) -> Vec<u8> {
