@@ -42,15 +42,14 @@ impl Block {
     /// 计算区块里所有交易的哈希
     pub fn hash_transactions(&self) -> Vec<u8> {
         let mut txhashs = vec![];
-        for transaction in self.transactions.clone() {
-            let txid = transaction.get_id();
-            txhashs.extend(txid.as_slice());
+        for transaction in &self.transactions {
+            txhashs.extend(transaction.get_id());
         }
         crate::sha256_digest(txhashs.as_slice())
     }
 
-    pub fn get_transactions(&self) -> Vec<Transaction> {
-        self.transactions.clone()
+    pub fn get_transactions(&self) -> &[Transaction] {
+        self.transactions.as_slice()
     }
 
     pub fn get_pre_block_hash(&self) -> String {

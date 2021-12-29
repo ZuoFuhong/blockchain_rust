@@ -1,6 +1,6 @@
 use blockchain_rust::{
-    calc_address, hash_pub_key, utils, validate_address, Blockchain, Transaction, Wallets,
-    ADDRESS_CHECK_SUM_LEN,
+    convert_address, hash_pub_key, utils, validate_address, Blockchain, Transaction, UTXOSet,
+    Wallets, ADDRESS_CHECK_SUM_LEN,
 };
 use data_encoding::HEXLOWER;
 use structopt::StructOpt;
@@ -19,7 +19,7 @@ enum Command {
     #[structopt(name = "createwallet", about = "Create a new wallet")]
     Createwallet,
     #[structopt(
-        name = "getBalance",
+        name = "getbalance",
         about = "Get the wallet balance of the target address"
     )]
     GetBalance {
@@ -39,28 +39,35 @@ enum Command {
     },
     #[structopt(name = "printchain", about = "Print blockchain all block")]
     Printchain,
-    #[structopt(name = "clearchain", about = "Print blockchain all block")]
-    Clearchain,
+    #[structopt(name = "reindexutxo", about = "rebuild UTXO index set")]
+    Reindexutxo,
 }
 
 fn main() {
     let opt = Opt::from_args();
     match opt.command {
         Command::Createblockchain => {
-            let _ = Blockchain::new_blockchain();
+            let blockchain = Blockchain::create_blockchain();
+            let utxo_set = UTXOSet::new(blockchain);
+            utxo_set.reindex();
             println!("Done!");
         }
         Command::Createwallet => {
             let mut wallet = Wallets::new();
             let address = wallet.create_wallet();
-            wallet.save_to_file();
             println!("Your new address: {}", address)
         }
         Command::GetBalance { address } => {
-            let blockchain = Blockchain::new_blockchain();
+            let address_valid = validate_address(address.as_str());
+            if address_valid == false {
+                panic!("ERROR: Address is not valid")
+            }
             let payload = utils::base58_decode(address.as_str());
-            let pub_key_hash = payload[1..payload.len() - ADDRESS_CHECK_SUM_LEN].to_vec();
-            let utxos = blockchain.find_utxo(pub_key_hash.as_slice());
+            let pub_key_hash = &payload[1..payload.len() - ADDRESS_CHECK_SUM_LEN];
+
+            let blockchain = Blockchain::new_blockchain();
+            let utxo_set = UTXOSet::new(blockchain);
+            let utxos = utxo_set.find_utxo(pub_key_hash);
             let mut balance = 0;
             for utxo in utxos {
                 balance += utxo.get_value();
@@ -81,9 +88,16 @@ fn main() {
                 panic!("ERROR: Recipient address is not valid")
             }
             let mut blockchain = Blockchain::new_blockchain();
+            let utxo_set = UTXOSet::new(blockchain.clone());
+            // 创建 UTXO 交易
             let transaction =
-                Transaction::new_utxo_transaction(from.as_str(), to.as_str(), amount, &blockchain);
-            blockchain.mine_block(vec![transaction]);
+                Transaction::new_utxo_transaction(from.as_str(), to.as_str(), amount, &utxo_set);
+            // 挖矿奖励
+            let coinbase_tx = Transaction::new_coinbase_tx(from.as_str());
+            // 挖新区块
+            let block = blockchain.mine_block(vec![transaction, coinbase_tx]);
+            // 更新 UTXO 集
+            utxo_set.update(&block);
             println!("Success!")
         }
         Command::Printchain => {
@@ -96,37 +110,39 @@ fn main() {
                 let block = option.unwrap();
                 println!("Pre block hash: {}", block.get_pre_block_hash());
                 println!("Cur block hash: {}", block.get_hash());
+                println!("Cur block Timestamp: {}", block.get_timestamp());
                 for tx in block.get_transactions() {
-                    for input in tx.get_vin() {
-                        let txid_hex = HEXLOWER.encode(input.get_txid().as_slice());
-                        let pub_key_hash = hash_pub_key(input.get_pub_key().as_slice());
-                        let address = calc_address(pub_key_hash.as_slice());
-                        println!(
-                            "Transaction input txid = {}, vout = {}, from = {}",
-                            txid_hex,
-                            input.get_vout(),
-                            address,
-                        )
+                    let cur_txid_hex = HEXLOWER.encode(tx.get_id());
+                    println!("- Transaction txid_hex: {}", cur_txid_hex);
+
+                    if tx.is_coinbase() == false {
+                        for input in tx.get_vin() {
+                            let txid_hex = HEXLOWER.encode(input.get_txid());
+                            let pub_key_hash = hash_pub_key(input.get_pub_key());
+                            let address = convert_address(pub_key_hash.as_slice());
+                            println!(
+                                "-- Input txid = {}, vout = {}, from = {}",
+                                txid_hex,
+                                input.get_vout(),
+                                address,
+                            )
+                        }
                     }
-                    let cur_txid_hex = HEXLOWER.encode(tx.get_id().as_slice());
                     for output in tx.get_vout() {
                         let pub_key_hash = output.get_pub_key_hash();
-                        let address = calc_address(pub_key_hash.as_slice());
-                        println!(
-                            "Transaction output current txid = {}, value = {}, to = {}",
-                            cur_txid_hex,
-                            output.get_value(),
-                            address,
-                        )
+                        let address = convert_address(pub_key_hash);
+                        println!("-- Output value = {}, to = {}", output.get_value(), address,)
                     }
                 }
-                println!("Timestamp: {}\n", block.get_timestamp());
+                println!()
             }
         }
-        Command::Clearchain => {
+        Command::Reindexutxo => {
             let blockchain = Blockchain::new_blockchain();
-            blockchain.clear_data();
-            println!("Done!");
+            let utxo_set = UTXOSet::new(blockchain);
+            utxo_set.reindex();
+            let count = utxo_set.count_transactions();
+            println!("Done! There are {} transactions in the UTXO set.", count);
         }
     }
 }

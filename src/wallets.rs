@@ -24,6 +24,7 @@ impl Wallets {
         let wallet = Wallet::new();
         let address = wallet.get_address();
         self.wallets.insert(address.clone(), wallet);
+        self.save_to_file();
         return address;
     }
 
@@ -36,10 +37,9 @@ impl Wallets {
     }
 
     /// 通过钱包地址查询钱包
-    pub fn get_wallet(&self, address: &str) -> Option<Wallet> {
+    pub fn get_wallet(&self, address: &str) -> Option<&Wallet> {
         if let Some(wallet) = self.wallets.get(address) {
-            // let w = wallet.clone();
-            return Some(wallet.clone());
+            return Some(wallet);
         }
         None
     }
@@ -59,7 +59,7 @@ impl Wallets {
     }
 
     /// 钱包持久化到本地文件
-    pub fn save_to_file(&self) {
+    fn save_to_file(&self) {
         let path = current_dir().unwrap().join(WALLET_FILE);
         let file = OpenOptions::new()
             .create(true)
@@ -78,15 +78,17 @@ mod tests {
     use crate::Wallets;
 
     #[test]
-    fn test_wallets() {
+    fn test_new_wallets() {
         let mut wallets = Wallets::new();
-        wallets.create_wallet();
+        let address = wallets.create_wallet();
+        println!("The new wallet address is {}", address);
+    }
 
-        wallets.save_to_file();
-        wallets.load_from_file();
-
-        for (k, _) in wallets.wallets {
-            println!("{}", k)
-        }
+    #[test]
+    fn test_get_addresses() {
+        let addresses = Wallets::new().get_addresses();
+        // 13SDifQUyLGCwFjh64vihoWQcGsTozHuQb
+        // 1LecNaLYsDoxRtxBBWKMNbLvccftmFZWcv
+        println!("{:?}", addresses);
     }
 }

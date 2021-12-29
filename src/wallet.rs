@@ -36,12 +36,12 @@ impl Wallet {
         crate::base58_encode(payload.as_slice())
     }
 
-    pub fn get_public_key(&self) -> Vec<u8> {
-        self.public_key.clone()
+    pub fn get_public_key(&self) -> &[u8] {
+        self.public_key.as_slice()
     }
 
-    pub fn get_pkcs8(&self) -> Vec<u8> {
-        self.pkcs8.clone()
+    pub fn get_pkcs8(&self) -> &[u8] {
+        self.pkcs8.as_slice()
     }
 }
 
@@ -73,7 +73,7 @@ pub fn validate_address(address: &str) -> bool {
 }
 
 /// 通过公钥哈希计算地址
-pub fn calc_address(pub_hash_key: &[u8]) -> String {
+pub fn convert_address(pub_hash_key: &[u8]) -> String {
     let mut payload: Vec<u8> = vec![];
     payload.push(VERSION);
     payload.extend(pub_hash_key);
@@ -87,9 +87,8 @@ mod tests {
     use crate::wallet::validate_address;
 
     #[test]
-    pub fn test_get_address() {
-        let wallet = crate::Wallet::new();
-        let address = wallet.get_address();
+    pub fn test_new_wallet() {
+        let address = crate::Wallet::new().get_address();
         println!("The address is {}", address)
     }
 
@@ -99,8 +98,8 @@ mod tests {
         let valid = validate_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
         println!("The address valid is {}", valid);
 
-        // 1CwipMiukwDsmhQdVG2u7gs3BasumzfAD5
-        let valid = validate_address("1CwipMiukwDsmhQdVG2u7gs3BasumzfAD5");
+        // 1JBH6RLAMNXKnAXCqtUWKnHwhUCBwsG4gS
+        let valid = validate_address("1JBH6RLAMNXKnAXCqtUWKnHwhUCBwsG4gS");
         println!("The address valid is {}", valid);
     }
 }

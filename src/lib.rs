@@ -4,6 +4,9 @@ use block::Block;
 mod blockchain;
 pub use blockchain::Blockchain;
 
+mod utxo_set;
+pub use utxo_set::UTXOSet;
+
 mod proof_of_work;
 use proof_of_work::ProofOfWork;
 
@@ -11,7 +14,7 @@ mod transaction;
 pub use transaction::Transaction;
 
 mod wallet;
-pub use wallet::calc_address;
+pub use wallet::convert_address;
 pub use wallet::hash_pub_key;
 pub use wallet::validate_address;
 pub use wallet::Wallet;

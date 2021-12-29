@@ -1,7 +1,8 @@
 use crate::wallet::hash_pub_key;
-use crate::{base58_decode, wallet, Blockchain, Wallets};
+use crate::{base58_decode, wallet, Blockchain, UTXOSet, Wallets};
 use data_encoding::HEXLOWER;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// 挖矿奖励金
 const SUBSIDY: i32 = 10;
@@ -17,25 +18,25 @@ pub struct TXInput {
 
 impl TXInput {
     /// 创建一个输入
-    pub fn new(txid: Vec<u8>, vout: usize) -> TXInput {
+    pub fn new(txid: &[u8], vout: usize) -> TXInput {
         TXInput {
-            txid,
+            txid: txid.to_vec(),
             vout,
             signature: vec![],
             pub_key: vec![],
         }
     }
 
-    pub fn get_txid(&self) -> Vec<u8> {
-        self.txid.clone()
+    pub fn get_txid(&self) -> &[u8] {
+        self.txid.as_slice()
     }
 
     pub fn get_vout(&self) -> usize {
         self.vout
     }
 
-    pub fn get_pub_key(&self) -> Vec<u8> {
-        self.pub_key.clone()
+    pub fn get_pub_key(&self) -> &[u8] {
+        self.pub_key.as_slice()
     }
 
     /// 检查输入使用了指定密钥来解锁一个输出
@@ -67,8 +68,8 @@ impl TXOutput {
         self.value
     }
 
-    pub fn get_pub_key_hash(&self) -> Vec<u8> {
-        self.pub_key_hash.clone()
+    pub fn get_pub_key_hash(&self) -> &[u8] {
+        self.pub_key_hash.as_slice()
     }
 
     fn lock(&mut self, address: &str) {
@@ -93,13 +94,16 @@ pub struct Transaction {
 impl Transaction {
     /// 创建一个 coinbase 交易，该没有输入，只有一个输出
     pub fn new_coinbase_tx(to: &str) -> Transaction {
-        let txin = TXInput::default();
         let txout = TXOutput::new(SUBSIDY, to);
+        let mut tx_input = TXInput::default();
+        tx_input.signature = Uuid::new_v4().as_bytes().to_vec();
+
         let mut tx = Transaction {
             id: vec![],
-            vin: vec![txin],
+            vin: vec![tx_input],
             vout: vec![txout],
         };
+
         tx.id = tx.hash();
         return tx;
     }
@@ -109,16 +113,15 @@ impl Transaction {
         from: &str,
         to: &str,
         amount: i32,
-        blockchain: &Blockchain,
+        utxo_set: &UTXOSet,
     ) -> Transaction {
         // 1.查找钱包
-        let wallet = Wallets::new()
-            .get_wallet(from)
-            .expect("unable to found wallet");
-        let public_key_hash = hash_pub_key(wallet.get_public_key().as_slice());
+        let wallets = Wallets::new();
+        let wallet = wallets.get_wallet(from).expect("unable to found wallet");
+        let public_key_hash = hash_pub_key(wallet.get_public_key());
         // 2.找到足够的未花费输出
         let (accumulated, valid_outputs) =
-            blockchain.find_spendable_outputs(public_key_hash.as_slice(), amount);
+            utxo_set.find_spendable_outputs(public_key_hash.as_slice(), amount);
         if accumulated < amount {
             panic!("Error: Not enough funds")
         }
@@ -132,7 +135,7 @@ impl Transaction {
                     txid: txid.clone(), // 上一笔交易的ID
                     vout: out,          // 输出的索引
                     signature: vec![],
-                    pub_key: wallet.get_public_key(),
+                    pub_key: wallet.get_public_key().to_vec(),
                 };
                 inputs.push(input);
             }
@@ -152,7 +155,7 @@ impl Transaction {
         // 生成交易ID
         tx.id = tx.hash();
         // 5.交易中的 TXInput 签名
-        tx.sign(blockchain, wallet.get_pkcs8());
+        tx.sign(utxo_set.get_blockchain(), wallet.get_pkcs8());
         return tx;
     }
 
@@ -175,12 +178,12 @@ impl Transaction {
     }
 
     /// 对交易的每个输入进行签名
-    fn sign(&mut self, blockchain: &Blockchain, pkcs8: Vec<u8>) {
+    fn sign(&mut self, blockchain: &Blockchain, pkcs8: &[u8]) {
         let mut tx_copy = self.trimmed_copy();
 
         for (idx, vin) in self.vin.iter_mut().enumerate() {
             // 查找输入引用的交易
-            let prev_tx_option = blockchain.find_transaction(vin.get_txid().as_slice());
+            let prev_tx_option = blockchain.find_transaction(vin.get_txid());
             if prev_tx_option.is_none() {
                 panic!("ERROR: Previous transaction is not correct")
             }
@@ -192,8 +195,7 @@ impl Transaction {
 
             // 使用私钥对数据签名
             let tx_bytes = bincode::serialize(&tx_copy).expect("unable to serialize transaction");
-            let signature =
-                crate::ecdsa_p256_sha256_sign_digest(pkcs8.as_slice(), tx_bytes.as_slice());
+            let signature = crate::ecdsa_p256_sha256_sign_digest(pkcs8, tx_bytes.as_slice());
             vin.signature = signature;
         }
     }
@@ -205,7 +207,7 @@ impl Transaction {
         }
         let mut tx_copy = self.trimmed_copy();
         for (idx, vin) in self.vin.iter().enumerate() {
-            let prev_tx_option = blockchain.find_transaction(vin.get_txid().as_slice());
+            let prev_tx_option = blockchain.find_transaction(vin.get_txid());
             if prev_tx_option.is_none() {
                 panic!("ERROR: Previous transaction is not correct")
             }
@@ -231,7 +233,7 @@ impl Transaction {
 
     /// 判断是否是 coinbase 交易
     pub fn is_coinbase(&self) -> bool {
-        return self.vin.len() == 1 && self.vin[0].txid.len() == 0 && self.vin[0].vout == 0;
+        return self.vin.len() == 1 && self.vin[0].pub_key.len() == 0;
     }
 
     /// 生成交易的哈希
@@ -245,41 +247,44 @@ impl Transaction {
         crate::sha256_digest(data.as_slice())
     }
 
-    pub fn get_id(&self) -> Vec<u8> {
-        return self.id.clone();
+    pub fn get_id(&self) -> &[u8] {
+        self.id.as_slice()
     }
 
-    pub fn get_vin(&self) -> Vec<TXInput> {
-        self.vin.clone()
+    pub fn get_vin(&self) -> &[TXInput] {
+        self.vin.as_slice()
     }
 
-    pub fn get_vout(&self) -> Vec<TXOutput> {
-        self.vout.clone()
+    pub fn get_vout(&self) -> &[TXOutput] {
+        self.vout.as_slice()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Blockchain, Transaction};
+    use crate::{Blockchain, Transaction, UTXOSet};
     use data_encoding::HEXLOWER;
 
     #[test]
     fn new_coinbase_tx() {
+        // BTC 创世块: 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
         let tx = Transaction::new_coinbase_tx("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
-        let txid_hex = HEXLOWER.encode(tx.get_id().as_slice());
+        let txid_hex = HEXLOWER.encode(tx.get_id());
         println!("txid = {}", txid_hex);
     }
 
     #[test]
     fn new_utxo_transaction() {
         let blockchain = Blockchain::new_blockchain();
+        let utxo_set = UTXOSet::new(blockchain);
         let tx = Transaction::new_utxo_transaction(
-            "1CjtQaWmX1SSbB3ySoFYCFCVpQbTsejpa7",
-            "1CjtQaWmX1SSbB3ySoFYCFCVpQbTsejpa7",
+            "13SDifQUyLGCwFjh64vihoWQcGsTozHuQb",
+            "1LecNaLYsDoxRtxBBWKMNbLvccftmFZWcv",
             5,
-            &blockchain,
+            &utxo_set,
         );
-        let txid_hex = HEXLOWER.encode(tx.get_id().as_slice());
-        println!("txid = {}", txid_hex);
+        let txid_hex = HEXLOWER.encode(tx.get_id());
+        // b4a0498750e48c431b84e03dd3ec0dc4d9df1b823c45a7e3c59171b8c2f099cd
+        println!("txid_hex = {}", txid_hex);
     }
 }
