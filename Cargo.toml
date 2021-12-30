@@ -19,3 +19,6 @@ rust-crypto = "0.2.36"
 bs58 = "0.4.0"
 rustc-serialize = "0.3.24"
 uuid = { version = "0.8.2", features = ["v4"]}
+
+[dev-dependencies]
+assert_cmd = "0.11.0"
