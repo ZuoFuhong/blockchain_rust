@@ -194,8 +194,7 @@ impl Transaction {
             tx_copy.vin[idx].pub_key = vec![];
 
             // 使用私钥对数据签名
-            let tx_bytes = bincode::serialize(&tx_copy).expect("unable to serialize transaction");
-            let signature = crate::ecdsa_p256_sha256_sign_digest(pkcs8, tx_bytes.as_slice());
+            let signature = crate::ecdsa_p256_sha256_sign_digest(pkcs8, tx_copy.get_id());
             vin.signature = signature;
         }
     }
@@ -218,11 +217,10 @@ impl Transaction {
             tx_copy.vin[idx].pub_key = vec![];
 
             // 使用公钥验证签名
-            let tx_bytes = bincode::serialize(&tx_copy).expect("unable to serialize transaction");
             let verify = crate::ecdsa_p256_sha256_sign_verify(
                 vin.pub_key.as_slice(),
                 vin.signature.as_slice(),
-                tx_bytes.as_slice(),
+                tx_copy.get_id(),
             );
             if !verify {
                 return false;
@@ -243,8 +241,7 @@ impl Transaction {
             vin: self.vin.clone(),
             vout: self.vout.clone(),
         };
-        let data = bincode::serialize(&tx_copy).unwrap();
-        crate::sha256_digest(data.as_slice())
+        crate::sha256_digest(tx_copy.serialize().as_slice())
     }
 
     pub fn get_id(&self) -> &[u8] {
@@ -257,6 +254,14 @@ impl Transaction {
 
     pub fn get_vout(&self) -> &[TXOutput] {
         self.vout.as_slice()
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        bincode::serialize(self).unwrap().to_vec()
+    }
+
+    pub fn deserialize(bytes: &[u8]) -> Transaction {
+        bincode::deserialize(bytes).unwrap()
     }
 }
 
@@ -271,6 +276,14 @@ mod tests {
         let tx = Transaction::new_coinbase_tx("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
         let txid_hex = HEXLOWER.encode(tx.get_id());
         println!("txid = {}", txid_hex);
+    }
+
+    #[test]
+    fn test_blockchain_serialize() {
+        let tx = Transaction::new_coinbase_tx("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
+        let tx_bytes = tx.serialize();
+        let new_tx = Transaction::deserialize(tx_bytes.as_ref());
+        assert_eq!(tx.get_id(), new_tx.get_id())
     }
 
     #[test]

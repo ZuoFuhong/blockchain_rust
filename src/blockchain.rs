@@ -11,7 +11,7 @@ const BLOCKS_TREE: &str = "blocks";
 
 #[derive(Clone)]
 pub struct Blockchain {
-    tip: String,
+    tip_hash: String, // hash of last block
     db: Db,
 }
 
@@ -22,7 +22,7 @@ impl Blockchain {
         let blocks_tree = db.open_tree(BLOCKS_TREE).unwrap();
 
         let data = blocks_tree.get(TIP_BLOCK_HASH_KEY).unwrap();
-        let tip;
+        let tip_hash;
         if data.is_none() {
             // 创世块的钱包
             let mut wallets = Wallets::new();
@@ -31,18 +31,18 @@ impl Blockchain {
             let coinbase_tx = Transaction::new_coinbase_tx(genesis_address.as_str());
             let block = Block::generate_genesis_block(coinbase_tx);
             Self::update_blocks_tree(&blocks_tree, &block);
-            tip = block.get_hash();
+            tip_hash = String::from(block.get_hash());
         } else {
-            tip = String::from_utf8(data.unwrap().to_vec()).unwrap();
+            tip_hash = String::from_utf8(data.unwrap().to_vec()).unwrap();
         }
-        Blockchain { tip, db }
+        Blockchain { tip_hash, db }
     }
 
     fn update_blocks_tree(blocks_tree: &Tree, block: &Block) {
         let block_hash = block.get_hash();
         let _: TransactionResult<(), ()> = blocks_tree.transaction(|tx_db| {
-            let _ = tx_db.insert(block_hash.as_bytes(), block.clone());
-            let _ = tx_db.insert(TIP_BLOCK_HASH_KEY, block_hash.as_bytes());
+            let _ = tx_db.insert(block_hash, block.clone());
+            let _ = tx_db.insert(TIP_BLOCK_HASH_KEY, block_hash);
             Ok(())
         });
     }
@@ -55,12 +55,16 @@ impl Blockchain {
             .get(TIP_BLOCK_HASH_KEY)
             .unwrap()
             .expect("No existing blockchain found. Create one first.");
-        let tip = String::from_utf8(tip_bytes.to_vec()).unwrap();
-        Blockchain { tip, db }
+        let tip_hash = String::from_utf8(tip_bytes.to_vec()).unwrap();
+        Blockchain { tip_hash, db }
     }
 
     pub fn get_db(&self) -> &Db {
         &self.db
+    }
+
+    pub fn get_tip_hash(&self) -> &str {
+        self.tip_hash.as_str()
     }
 
     /// 挖矿新区块
@@ -70,17 +74,18 @@ impl Blockchain {
                 panic!("ERROR: Invalid transaction")
             }
         }
-        let block = Block::new_block(self.tip.as_str(), transactions);
+        let best_height = self.get_best_height();
+        let block = Block::new_block(self.tip_hash.as_str(), transactions, best_height + 1);
         let block_hash = block.get_hash();
 
         let blocks_tree = self.db.open_tree(BLOCKS_TREE).unwrap();
         Self::update_blocks_tree(&blocks_tree, &block);
-        self.tip = block_hash;
+        self.tip_hash = String::from(block_hash);
         block
     }
 
     pub fn iterator(&self) -> BlockchainIterator {
-        BlockchainIterator::new(self.tip.clone(), self.db.clone())
+        BlockchainIterator::new(self.tip_hash.as_str(), self.db.clone())
     }
 
     /// 查找所有未花费的交易输出 ( K -> txid_hex, V -> Vec<TXOutput )
@@ -149,6 +154,64 @@ impl Blockchain {
         }
         None
     }
+
+    /// 添加一个区块到区块链
+    pub fn add_block(&mut self, block: &Block) {
+        let block_tree = self.db.open_tree(BLOCKS_TREE).unwrap();
+        if let Some(_) = block_tree.get(block.get_hash()).unwrap() {
+            return;
+        }
+        let _: TransactionResult<(), ()> = block_tree.transaction(|tx_db| {
+            let _ = tx_db.insert(block.get_hash(), block.serialize()).unwrap();
+
+            let tip_block_bytes = tx_db
+                .get(self.tip_hash.as_str())
+                .unwrap()
+                .expect("The tip hash is not valid");
+            let tip_block = Block::deserialize(tip_block_bytes.as_ref());
+            if block.get_height() > tip_block.get_height() {
+                let _ = tx_db.insert(TIP_BLOCK_HASH_KEY, block.get_hash()).unwrap();
+            }
+            Ok(())
+        });
+        self.tip_hash = String::from(block.get_hash());
+    }
+
+    /// 获取最新区块在链中的高度
+    pub fn get_best_height(&self) -> usize {
+        let block_tree = self.db.open_tree(BLOCKS_TREE).unwrap();
+        let tip_block_bytes = block_tree
+            .get(self.tip_hash.as_str())
+            .unwrap()
+            .expect("The tip hash is valid");
+        let tip_block = Block::deserialize(tip_block_bytes.as_ref());
+        tip_block.get_height()
+    }
+
+    /// 通过区块哈希查询区块
+    pub fn get_block(&self, block_hash: &[u8]) -> Option<Block> {
+        let block_tree = self.db.open_tree(BLOCKS_TREE).unwrap();
+        if let Some(block_bytes) = block_tree.get(block_hash).unwrap() {
+            let block = Block::deserialize(block_bytes.as_ref());
+            return Some(block);
+        }
+        return None;
+    }
+
+    /// 返回链中所有区块的哈希列表
+    pub fn get_block_hashes(&self) -> Vec<String> {
+        let mut iterator = self.iterator();
+        let mut blocks = vec![];
+        loop {
+            let option = iterator.next();
+            if option.is_none() {
+                break;
+            }
+            let block = option.unwrap();
+            blocks.push(String::from(block.get_hash()));
+        }
+        blocks
+    }
 }
 
 pub struct BlockchainIterator {
@@ -157,9 +220,9 @@ pub struct BlockchainIterator {
 }
 
 impl BlockchainIterator {
-    fn new(tip: String, db: Db) -> BlockchainIterator {
+    fn new(tip_hash: &str, db: Db) -> BlockchainIterator {
         BlockchainIterator {
-            current_hash: tip,
+            current_hash: String::from(tip_hash),
             db,
         }
     }
@@ -178,11 +241,57 @@ impl BlockchainIterator {
 
 #[cfg(test)]
 mod tests {
+    use crate::Block;
 
     #[test]
     fn test_create_blockchain() {
-        let blockchain = super::Blockchain::create_blockchain();
-        println!("tip = {}", blockchain.tip)
+        let _ = super::Blockchain::create_blockchain();
+    }
+
+    #[test]
+    fn test_mine_block() {
+        let mut blockchain = super::Blockchain::new_blockchain();
+        let _ = blockchain.mine_block(vec![]);
+    }
+
+    #[test]
+    fn test_get_best_height() {
+        let blockchain = super::Blockchain::new_blockchain();
+        println!(
+            "tip_hash = {}, best_height: {}",
+            blockchain.get_tip_hash(),
+            blockchain.get_best_height()
+        );
+    }
+
+    #[test]
+    fn test_add_block() {
+        let mut blockchain = super::Blockchain::new_blockchain();
+        let best_height = blockchain.get_best_height();
+        let block = Block::new_block(blockchain.get_tip_hash(), vec![], best_height + 1);
+        blockchain.add_block(&block);
+        println!(
+            "tip_hash = {}, best_height = {}",
+            blockchain.get_tip_hash(),
+            blockchain.get_best_height()
+        );
+    }
+
+    #[test]
+    fn test_get_block_hashes() {
+        let blockchain = super::Blockchain::new_blockchain();
+        let block_hashs = blockchain.get_block_hashes();
+        println!("{:?}", block_hashs);
+    }
+
+    #[test]
+    fn test_get_block() {
+        let blockchain = super::Blockchain::new_blockchain();
+        if let Some(block) = blockchain.get_block(
+            "0060a9e030158c9fa012f06eeb18f8d1f26523aa1483face260730c14a140fce".as_bytes(),
+        ) {
+            println!("{}", block.get_hash())
+        }
     }
 
     #[test]

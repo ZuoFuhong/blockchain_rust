@@ -9,17 +9,19 @@ pub struct Block {
     hash: String,                   // 当前区块的哈希值
     transactions: Vec<Transaction>, // 交易数据
     nonce: i64,                     // 计数器
+    height: usize,                  // 区块链中节点的高度
 }
 
 impl Block {
     /// 新建一个区块
-    pub fn new_block(pre_block_hash: &str, transactions: Vec<Transaction>) -> Block {
+    pub fn new_block(pre_block_hash: &str, transactions: Vec<Transaction>, height: usize) -> Block {
         let mut block = Block {
             timestamp: crate::current_timestamp(),
             pre_block_hash: String::from(pre_block_hash),
             hash: String::new(),
             transactions,
             nonce: 0,
+            height,
         };
         // 挖矿计算哈希
         let pow = ProofOfWork::new_proof_of_work(block.clone());
@@ -34,9 +36,14 @@ impl Block {
         bincode::deserialize(bytes).unwrap()
     }
 
+    /// 区块序列化
+    pub fn serialize(&self) -> Vec<u8> {
+        bincode::serialize(self).unwrap().to_vec()
+    }
+
     /// 生成创世块
     pub fn generate_genesis_block(transaction: Transaction) -> Block {
-        return Block::new_block("None", vec![transaction]);
+        return Block::new_block("None", vec![transaction], 0);
     }
 
     /// 计算区块里所有交易的哈希
@@ -56,12 +63,16 @@ impl Block {
         self.pre_block_hash.clone()
     }
 
-    pub fn get_hash(&self) -> String {
-        self.hash.clone()
+    pub fn get_hash(&self) -> &str {
+        self.hash.as_str()
     }
 
     pub fn get_timestamp(&self) -> i64 {
         self.timestamp
+    }
+
+    pub fn get_height(&self) -> usize {
+        self.height
     }
 }
 
@@ -82,6 +93,7 @@ mod tests {
         let block = Block::new_block(
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
             vec![],
+            0,
         );
         println!("new block hash is {}", block.hash)
     }
@@ -92,9 +104,10 @@ mod tests {
         let block = Block::new_block(
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
             vec![tx],
+            0,
         );
-        let bytes = bincode::serialize(&block).unwrap();
-        let desc_block = Block::deserialize(&bytes[..]);
+        let block_bytes = block.serialize();
+        let desc_block = Block::deserialize(&block_bytes[..]);
         assert_eq!(block.hash, desc_block.hash)
     }
 }
