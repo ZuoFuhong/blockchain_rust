@@ -84,6 +84,11 @@ impl BlockInTransit {
         }
     }
 
+    pub fn clear(&self) {
+        let mut inner = self.inner.write().unwrap();
+        inner.clear();
+    }
+
     pub fn len(&self) -> usize {
         self.inner.read().unwrap().len()
     }

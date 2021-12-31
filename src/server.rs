@@ -2,13 +2,13 @@ use crate::{
     Block, BlockInTransit, Blockchain, MemoryPool, Nodes, Transaction, UTXOSet, GLOBAL_CONFIG,
 };
 use data_encoding::HEXLOWER;
-use log::{debug, error};
+use log::{error, info};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
 use std::error::Error;
 use std::io::{BufReader, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
@@ -16,13 +16,16 @@ use std::time::Duration;
 const NODE_VERSION: usize = 1;
 
 /// 中心节点硬编码
-const CENTER_NODE_ADDR: &str = "127.0.0.1:2001";
+pub const CENTERAL_NODE: &str = "127.0.0.1:2001";
 
-/// 节点地址
+/// 内存池中的交易到达阈值, 触发矿工挖新区块
+pub const TRANSACTION_THRESHOLD: usize = 2;
+
+/// 全网的节点地址
 static GLOBAL_NODES: Lazy<Nodes> = Lazy::new(|| {
     let nodes = Nodes::new();
     // 记录中心地址
-    nodes.add_node(String::from(CENTER_NODE_ADDR));
+    nodes.add_node(String::from(CENTERAL_NODE));
     return nodes;
 });
 
@@ -32,7 +35,7 @@ static GLOBAL_MEMORY_POOL: Lazy<MemoryPool> = Lazy::new(|| MemoryPool::new());
 /// 传输中的Block, 用于来跟踪已下载的块, 这能够实现从不同的节点下载块
 static GLOBAL_BLOCKS_IN_TRANSIT: Lazy<BlockInTransit> = Lazy::new(|| BlockInTransit::new());
 
-/// 网络读写超时
+/// 网络写超时
 const TCP_WRITE_TIMEOUT: u64 = 1000;
 
 pub struct Server {
@@ -44,8 +47,23 @@ impl Server {
         Server { blockchain }
     }
 
-    pub fn run(&self, addr: SocketAddr) {
+    pub fn run(&self, addr: &str) {
         let listener = TcpListener::bind(addr).unwrap();
+
+        // 发送 version 握手
+        if addr.to_string().eq(CENTERAL_NODE) == false {
+            let best_height = self.blockchain.get_best_height();
+            info!("send sersion best_height: {}", best_height);
+            let socket_addr = CENTERAL_NODE.parse().unwrap();
+            send_data(
+                socket_addr,
+                Package::Version {
+                    version: NODE_VERSION,
+                    best_height,
+                },
+            );
+        }
+        info!("Start node server on {}", addr);
         for stream in listener.incoming() {
             let blockchain = self.blockchain.clone();
             thread::spawn(|| match stream {
@@ -63,16 +81,13 @@ impl Server {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-enum OpType {
+pub enum OpType {
     Tx,
     Block,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-enum Package {
-    Addr {
-        addr_list: Vec<String>,
-    },
+pub enum Package {
     Block {
         block: Vec<u8>,
     },
@@ -100,24 +115,15 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
     let pkg_reader = Deserializer::from_reader(reader).into_iter::<Package>();
     for pkg in pkg_reader {
         let pkg = pkg?;
-        debug!("Receive request from {}: {:?}", peer_addr, pkg);
+        info!("Receive request from {}: {:?}", peer_addr, pkg);
         match pkg {
-            Package::Addr { addr_list } => {
-                for addr in &addr_list {
-                    GLOBAL_NODES.add_node(addr.clone());
-                }
-                debug!("There are {} known nodes now!", GLOBAL_NODES.len());
-
-                for node in &GLOBAL_NODES.get_nodes() {
-                    send_data(node.parse_socket_addr(), Package::GetBlocks);
-                }
-            }
             Package::Block { block } => {
                 let block = Block::deserialize(block.as_slice());
                 blockchain.add_block(&block);
-                debug!("Added block {}", block.get_hash());
+                info!("Added block {}", block.get_hash());
 
                 if GLOBAL_BLOCKS_IN_TRANSIT.len() > 0 {
+                    // 继续下载区块
                     let block_hash = GLOBAL_BLOCKS_IN_TRANSIT.first().unwrap();
                     send_data(
                         peer_addr,
@@ -126,8 +132,10 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                             id: block_hash.clone(),
                         },
                     );
+                    // 从下载列表中移除
                     GLOBAL_BLOCKS_IN_TRANSIT.remove(block_hash.as_slice());
                 } else {
+                    // 区块全部下载后，再重建索引
                     let utxo_set = UTXOSet::new(blockchain.clone());
                     utxo_set.reindex();
                 }
@@ -166,7 +174,14 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                 }
             },
             Package::Inv { op_type, items } => match op_type {
+                // 两种触发情况：
+                //  1. 当 version 消息检查到区块高度落后，会收到全量的 block hash 列表。
+                //  2. 矿工挖出新的区块后，会将新区块的 hash 广播给所有节点。
                 OpType::Block => {
+                    // 初始启动才会触发，不可能有存量数据
+                    GLOBAL_BLOCKS_IN_TRANSIT.add_blocks(items.as_slice());
+
+                    // 下载一个区块
                     let block_hash = items.get(0).unwrap();
                     send_data(
                         peer_addr,
@@ -175,14 +190,15 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                             id: block_hash.to_vec(),
                         },
                     );
-                    GLOBAL_BLOCKS_IN_TRANSIT.add_blocks(items[1..].as_ref());
+                    // 从下载列表中移除
+                    GLOBAL_BLOCKS_IN_TRANSIT.remove(block_hash);
                 }
                 OpType::Tx => {
                     let txid = items.get(0).unwrap();
                     let txid_hex = HEXLOWER.encode(txid);
 
-                    // 检查交易池，不包含哈希则下载
-                    if GLOBAL_MEMORY_POOL.containes(txid_hex.as_str()) {
+                    // 检查交易池，不包含交易则下载
+                    if GLOBAL_MEMORY_POOL.containes(txid_hex.as_str()) == false {
                         send_data(
                             peer_addr,
                             Package::GetData {
@@ -199,10 +215,9 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                 let txid = tx.get_id_bytes();
                 GLOBAL_MEMORY_POOL.add(tx);
 
-                let node_addr = GLOBAL_CONFIG.get_addr();
-                let center_node = GLOBAL_NODES.first().unwrap();
-                // 中心节点
-                if node_addr.eq(center_node.get_addr().as_str()) {
+                let node_addr = GLOBAL_CONFIG.get_node_addr();
+                // 中心节点（广播交易）
+                if node_addr.eq(CENTERAL_NODE) {
                     let nodes = GLOBAL_NODES.get_nodes();
                     for node in &nodes {
                         if node_addr.eq(node.get_addr().as_str()) {
@@ -220,10 +235,11 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                         );
                     }
                 }
-                // 矿工节点
-                if GLOBAL_MEMORY_POOL.len() >= 2 && GLOBAL_CONFIG.is_miner() {
+                // 矿工节点（内存池中的交易到达一定数量，挖出新区块）
+                if GLOBAL_MEMORY_POOL.len() >= TRANSACTION_THRESHOLD && GLOBAL_CONFIG.is_miner() {
                     // 挖矿奖励
-                    let coinbase_tx = Transaction::new_coinbase_tx(node_addr.as_str());
+                    let mining_address = GLOBAL_CONFIG.get_mining_addr().unwrap();
+                    let coinbase_tx = Transaction::new_coinbase_tx(mining_address.as_str());
                     let mut txs = GLOBAL_MEMORY_POOL.get_all();
                     txs.push(coinbase_tx);
 
@@ -231,9 +247,9 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                     let new_block = blockchain.mine_block(&txs);
                     let utxo_set = UTXOSet::new(blockchain.clone());
                     utxo_set.reindex();
-                    debug!("New block {} is mined!", new_block.get_hash());
+                    info!("New block {} is mined!", new_block.get_hash());
 
-                    // 清理交易池
+                    // 从内存池中移除交易
                     for tx in &txs {
                         let txid_hex = HEXLOWER.encode(tx.get_id());
                         GLOBAL_MEMORY_POOL.remove(txid_hex.as_str());
@@ -258,7 +274,7 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                 version,
                 best_height,
             } => {
-                debug!("version = {}, best_height = {}", version, best_height);
+                info!("version = {}, best_height = {}", version, best_height);
                 let local_best_height = blockchain.get_best_height();
                 if local_best_height < best_height {
                     send_data(peer_addr, Package::GetBlocks);
@@ -279,11 +295,13 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
             }
         }
     }
+    let _ = stream.shutdown(Shutdown::Both);
     Ok(())
 }
 
 /// 统一发送请求
-fn send_data(addr: SocketAddr, pkg: Package) {
+pub fn send_data(addr: SocketAddr, pkg: Package) {
+    info!("send package: {:?}", &pkg);
     let stream = TcpStream::connect(addr);
     if stream.is_err() {
         error!("The {} is not valid", addr);
@@ -299,13 +317,15 @@ fn send_data(addr: SocketAddr, pkg: Package) {
 
 #[cfg(test)]
 mod tests {
+    use super::Server;
     use crate::server::{send_data, Package};
     use crate::Blockchain;
 
     #[test]
     fn test_new_server() {
-        let blockchain = Blockchain::create_blockchain();
-        let _ = crate::Server::new(blockchain);
+        let blockchain = Blockchain::create_blockchain("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
+        let server = Server::new(blockchain);
+        server.run("127.0.0.1:2001");
     }
 
     #[test]

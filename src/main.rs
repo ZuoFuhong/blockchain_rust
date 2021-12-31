@@ -1,10 +1,13 @@
 use blockchain_rust::{
-    convert_address, hash_pub_key, utils, validate_address, Blockchain, Transaction, UTXOSet,
-    Wallets, ADDRESS_CHECK_SUM_LEN,
+    convert_address, hash_pub_key, send_data, utils, validate_address, Blockchain, Package, Server,
+    Transaction, UTXOSet, Wallets, ADDRESS_CHECK_SUM_LEN, CENTERAL_NODE, GLOBAL_CONFIG,
 };
 use data_encoding::HEXLOWER;
 use log::LevelFilter;
 use structopt::StructOpt;
+
+/// mine 标志指的是块会立刻被同一节点挖出来。必须要有这个标志，因为初始状态时，网络中没有矿工节点。
+const MINE_TRUE: usize = 1;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "blockchain_rust")]
@@ -37,17 +40,22 @@ enum Command {
         to: String,
         #[structopt(name = "amount", help = "Amount to send")]
         amount: i32,
+        #[structopt(name = "mine", help = "Mine immediately on the same node")]
+        mine: usize,
     },
     #[structopt(name = "printchain", about = "Print blockchain all block")]
     Printchain,
     #[structopt(name = "reindexutxo", about = "rebuild UTXO index set")]
     Reindexutxo,
+    #[structopt(name = "startnode", about = "Start a node")]
+    StartNode {
+        #[structopt(name = "miner", help = "Enable mining mode and send reward to ADDRESS")]
+        miner: String,
+    },
 }
 
 fn main() {
-    env_logger::builder()
-        .filter_level(LevelFilter::Debug)
-        .init();
+    env_logger::builder().filter_level(LevelFilter::Info).init();
     let opt = Opt::from_args();
     match opt.command {
         Command::Createblockchain => {
@@ -84,24 +92,40 @@ fn main() {
                 println!("{}", address)
             }
         }
-        Command::Send { from, to, amount } => {
+        Command::Send {
+            from,
+            to,
+            amount,
+            mine,
+        } => {
             if !validate_address(from.as_str()) {
                 panic!("ERROR: Sender address is not valid")
             }
             if !validate_address(to.as_str()) {
                 panic!("ERROR: Recipient address is not valid")
             }
-            let mut blockchain = Blockchain::new_blockchain();
+            let blockchain = Blockchain::new_blockchain();
             let utxo_set = UTXOSet::new(blockchain.clone());
             // 创建 UTXO 交易
             let transaction =
                 Transaction::new_utxo_transaction(from.as_str(), to.as_str(), amount, &utxo_set);
-            // 挖矿奖励
-            let coinbase_tx = Transaction::new_coinbase_tx(from.as_str());
-            // 挖新区块
-            let block = blockchain.mine_block(&vec![transaction, coinbase_tx]);
-            // 更新 UTXO 集
-            utxo_set.update(&block);
+
+            if mine == MINE_TRUE {
+                // 挖矿奖励
+                let coinbase_tx = Transaction::new_coinbase_tx(from.as_str());
+                // 挖新区块
+                let block = blockchain.mine_block(&vec![transaction, coinbase_tx]);
+                // 更新 UTXO 集
+                utxo_set.update(&block);
+            } else {
+                let socket_addr = CENTERAL_NODE.parse().unwrap();
+                send_data(
+                    socket_addr,
+                    Package::Tx {
+                        transaction: transaction.serialize(),
+                    },
+                );
+            }
             println!("Success!")
         }
         Command::Printchain => {
@@ -147,6 +171,19 @@ fn main() {
             utxo_set.reindex();
             let count = utxo_set.count_transactions();
             println!("Done! There are {} transactions in the UTXO set.", count);
+        }
+        Command::StartNode { miner } => {
+            if miner.len() > 0 {
+                if validate_address(miner.as_str()) == false {
+                    panic!("Wrong miner address!")
+                }
+                println!("Mining is on. Address to receive rewards: {}", miner)
+            }
+            GLOBAL_CONFIG.set_mining_addr(miner);
+
+            let blockchain = Blockchain::new_blockchain();
+            let sockert_addr = GLOBAL_CONFIG.get_node_addr();
+            Server::new(blockchain).run(sockert_addr.as_str());
         }
     }
 }

@@ -96,10 +96,6 @@ mod tests {
     pub fn test_validate_address() {
         // BTC 创世块：1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
         let valid = validate_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
-        println!("The address valid is {}", valid);
-
-        // 1JBH6RLAMNXKnAXCqtUWKnHwhUCBwsG4gS
-        let valid = validate_address("1JBH6RLAMNXKnAXCqtUWKnHwhUCBwsG4gS");
-        println!("The address valid is {}", valid);
+        assert!(valid);
     }
 }
