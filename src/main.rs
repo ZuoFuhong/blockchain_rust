@@ -3,6 +3,7 @@ use blockchain_rust::{
     Wallets, ADDRESS_CHECK_SUM_LEN,
 };
 use data_encoding::HEXLOWER;
+use log::LevelFilter;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -44,6 +45,9 @@ enum Command {
 }
 
 fn main() {
+    env_logger::builder()
+        .filter_level(LevelFilter::Debug)
+        .init();
     let opt = Opt::from_args();
     match opt.command {
         Command::Createblockchain => {
@@ -95,7 +99,7 @@ fn main() {
             // 挖矿奖励
             let coinbase_tx = Transaction::new_coinbase_tx(from.as_str());
             // 挖新区块
-            let block = blockchain.mine_block(vec![transaction, coinbase_tx]);
+            let block = blockchain.mine_block(&vec![transaction, coinbase_tx]);
             // 更新 UTXO 集
             utxo_set.update(&block);
             println!("Success!")

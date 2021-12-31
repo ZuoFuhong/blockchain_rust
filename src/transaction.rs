@@ -248,6 +248,10 @@ impl Transaction {
         self.id.as_slice()
     }
 
+    pub fn get_id_bytes(&self) -> Vec<u8> {
+        self.id.clone()
+    }
+
     pub fn get_vin(&self) -> &[TXInput] {
         self.vin.as_slice()
     }

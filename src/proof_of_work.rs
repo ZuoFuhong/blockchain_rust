@@ -10,7 +10,7 @@ pub struct ProofOfWork {
 }
 
 /// 难度值，这里表示哈希的前20位必须是0
-const TARGET_BITS: i32 = 20;
+const TARGET_BITS: i32 = 8;
 /// 限制 nonce 避免整型溢出
 const MAX_NONCE: i64 = i64::MAX;
 

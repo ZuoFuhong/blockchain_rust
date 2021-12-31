@@ -14,12 +14,12 @@ pub struct Block {
 
 impl Block {
     /// 新建一个区块
-    pub fn new_block(pre_block_hash: &str, transactions: Vec<Transaction>, height: usize) -> Block {
+    pub fn new_block(pre_block_hash: String, transactions: &[Transaction], height: usize) -> Block {
         let mut block = Block {
             timestamp: crate::current_timestamp(),
-            pre_block_hash: String::from(pre_block_hash),
+            pre_block_hash,
             hash: String::new(),
-            transactions,
+            transactions: transactions.to_vec(),
             nonce: 0,
             height,
         };
@@ -42,8 +42,9 @@ impl Block {
     }
 
     /// 生成创世块
-    pub fn generate_genesis_block(transaction: Transaction) -> Block {
-        return Block::new_block("None", vec![transaction], 0);
+    pub fn generate_genesis_block(transaction: &Transaction) -> Block {
+        let transactions = vec![transaction.clone()];
+        return Block::new_block(String::from("None"), &transactions, 0);
     }
 
     /// 计算区块里所有交易的哈希
@@ -65,6 +66,10 @@ impl Block {
 
     pub fn get_hash(&self) -> &str {
         self.hash.as_str()
+    }
+
+    pub fn get_hash_bytes(&self) -> Vec<u8> {
+        self.hash.as_bytes().to_vec()
     }
 
     pub fn get_timestamp(&self) -> i64 {
@@ -91,8 +96,8 @@ mod tests {
     #[test]
     fn test_new_block() {
         let block = Block::new_block(
-            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-            vec![],
+            String::from("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
+            &vec![],
             0,
         );
         println!("new block hash is {}", block.hash)
@@ -102,8 +107,8 @@ mod tests {
     fn test_block_serialize() {
         let tx = Transaction::new_coinbase_tx("Genesis");
         let block = Block::new_block(
-            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-            vec![tx],
+            String::from("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
+            &vec![tx],
             0,
         );
         let block_bytes = block.serialize();

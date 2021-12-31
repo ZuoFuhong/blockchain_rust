@@ -23,6 +23,20 @@ pub use wallet::ADDRESS_CHECK_SUM_LEN;
 mod wallets;
 pub use wallets::Wallets;
 
+mod server;
+pub use server::Server;
+
+mod node;
+pub use node::Nodes;
+
+mod memory_pool;
+pub use memory_pool::BlockInTransit;
+pub use memory_pool::MemoryPool;
+
+mod config;
+pub use config::Config;
+pub use config::GLOBAL_CONFIG;
+
 pub mod utils;
 use utils::base58_decode;
 use utils::base58_encode;
