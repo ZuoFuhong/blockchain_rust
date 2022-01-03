@@ -51,17 +51,10 @@ impl Server {
         let listener = TcpListener::bind(addr).unwrap();
 
         // 发送 version 握手
-        if addr.to_string().eq(CENTERAL_NODE) == false {
+        if addr.eq(CENTERAL_NODE) == false {
             let best_height = self.blockchain.get_best_height();
             info!("send sersion best_height: {}", best_height);
-            let socket_addr = CENTERAL_NODE.parse().unwrap();
-            send_data(
-                socket_addr,
-                Package::Version {
-                    version: NODE_VERSION,
-                    best_height,
-                },
-            );
+            send_version(CENTERAL_NODE, best_height);
         }
         info!("Start node server on {}", addr);
         for stream in listener.incoming() {
@@ -89,24 +82,105 @@ pub enum OpType {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Package {
     Block {
+        addr_from: String,
         block: Vec<u8>,
     },
-    GetBlocks,
+    GetBlocks {
+        addr_from: String,
+    },
     GetData {
+        addr_from: String,
         op_type: OpType,
         id: Vec<u8>,
     },
     Inv {
+        addr_from: String,
         op_type: OpType,
         items: Vec<Vec<u8>>,
     },
     Tx {
+        addr_from: String,
         transaction: Vec<u8>,
     },
     Version {
+        addr_from: String,
         version: usize,
         best_height: usize,
     },
+}
+
+fn send_get_data(addr: &str, op_type: OpType, block_hash: &[u8]) {
+    let socket_addr = addr.parse().unwrap();
+    let node_addr = GLOBAL_CONFIG.get_node_addr().parse().unwrap();
+    send_data(
+        socket_addr,
+        Package::GetData {
+            addr_from: node_addr,
+            op_type,
+            id: block_hash.to_vec(),
+        },
+    );
+}
+
+fn send_inv(addr: &str, op_type: OpType, blocks: &[Vec<u8>]) {
+    let socket_addr = addr.parse().unwrap();
+    let node_addr = GLOBAL_CONFIG.get_node_addr().parse().unwrap();
+    send_data(
+        socket_addr,
+        Package::Inv {
+            addr_from: node_addr,
+            op_type,
+            items: blocks.to_vec(),
+        },
+    );
+}
+
+fn send_block(addr: &str, block: &Block) {
+    let socket_addr = addr.parse().unwrap();
+    let node_addr = GLOBAL_CONFIG.get_node_addr().parse().unwrap();
+    send_data(
+        socket_addr,
+        Package::Block {
+            addr_from: node_addr,
+            block: block.serialize(),
+        },
+    );
+}
+
+pub fn send_tx(addr: &str, tx: &Transaction) {
+    let socket_addr = addr.parse().unwrap();
+    let node_addr = GLOBAL_CONFIG.get_node_addr().parse().unwrap();
+    send_data(
+        socket_addr,
+        Package::Tx {
+            addr_from: node_addr,
+            transaction: tx.serialize(),
+        },
+    );
+}
+
+fn send_version(addr: &str, height: usize) {
+    let socket_addr = addr.parse().unwrap();
+    let node_addr = GLOBAL_CONFIG.get_node_addr().parse().unwrap();
+    send_data(
+        socket_addr,
+        Package::Version {
+            addr_from: node_addr,
+            version: NODE_VERSION,
+            best_height: height,
+        },
+    );
+}
+
+fn send_get_blocks(addr: &str) {
+    let socket_addr = addr.parse().unwrap();
+    let node_addr = GLOBAL_CONFIG.get_node_addr().parse().unwrap();
+    send_data(
+        socket_addr,
+        Package::GetBlocks {
+            addr_from: node_addr,
+        },
+    );
 }
 
 fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>> {
@@ -117,7 +191,7 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
         let pkg = pkg?;
         info!("Receive request from {}: {:?}", peer_addr, pkg);
         match pkg {
-            Package::Block { block } => {
+            Package::Block { addr_from, block } => {
                 let block = Block::deserialize(block.as_slice());
                 blockchain.add_block(&block);
                 info!("Added block {}", block.get_hash());
@@ -125,13 +199,7 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                 if GLOBAL_BLOCKS_IN_TRANSIT.len() > 0 {
                     // 继续下载区块
                     let block_hash = GLOBAL_BLOCKS_IN_TRANSIT.first().unwrap();
-                    send_data(
-                        peer_addr,
-                        Package::GetData {
-                            op_type: OpType::Block,
-                            id: block_hash.clone(),
-                        },
-                    );
+                    send_get_data(addr_from.as_str(), OpType::Block, &block_hash);
                     // 从下载列表中移除
                     GLOBAL_BLOCKS_IN_TRANSIT.remove(block_hash.as_slice());
                 } else {
@@ -140,40 +208,32 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                     utxo_set.reindex();
                 }
             }
-            Package::GetBlocks => {
+            Package::GetBlocks { addr_from } => {
                 let blocks = blockchain.get_block_hashes();
-                send_data(
-                    peer_addr,
-                    Package::Inv {
-                        op_type: OpType::Block,
-                        items: blocks,
-                    },
-                );
+                send_inv(addr_from.as_str(), OpType::Block, &blocks);
             }
-            Package::GetData { op_type, id } => match op_type {
+            Package::GetData {
+                addr_from,
+                op_type,
+                id,
+            } => match op_type {
                 OpType::Block => {
                     if let Some(block) = blockchain.get_block(id.as_slice()) {
-                        send_data(
-                            peer_addr,
-                            Package::Block {
-                                block: block.serialize(),
-                            },
-                        )
+                        send_block(addr_from.as_str(), &block);
                     }
                 }
                 OpType::Tx => {
                     let txid_hex = HEXLOWER.encode(id.as_slice());
                     if let Some(tx) = GLOBAL_MEMORY_POOL.get(txid_hex.as_str()) {
-                        send_data(
-                            peer_addr,
-                            Package::Tx {
-                                transaction: tx.serialize(),
-                            },
-                        );
+                        send_tx(addr_from.as_str(), &tx);
                     }
                 }
             },
-            Package::Inv { op_type, items } => match op_type {
+            Package::Inv {
+                addr_from,
+                op_type,
+                items,
+            } => match op_type {
                 // 两种触发情况：
                 //  1. 当 version 消息检查到区块高度落后，会收到全量的 block hash 列表。
                 //  2. 矿工挖出新的区块后，会将新区块的 hash 广播给所有节点。
@@ -183,13 +243,7 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
 
                     // 下载一个区块
                     let block_hash = items.get(0).unwrap();
-                    send_data(
-                        peer_addr,
-                        Package::GetData {
-                            op_type: OpType::Block,
-                            id: block_hash.to_vec(),
-                        },
-                    );
+                    send_get_data(addr_from.as_str(), OpType::Block, block_hash);
                     // 从下载列表中移除
                     GLOBAL_BLOCKS_IN_TRANSIT.remove(block_hash);
                 }
@@ -199,17 +253,14 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
 
                     // 检查交易池，不包含交易则下载
                     if GLOBAL_MEMORY_POOL.containes(txid_hex.as_str()) == false {
-                        send_data(
-                            peer_addr,
-                            Package::GetData {
-                                op_type: OpType::Tx,
-                                id: txid.clone(),
-                            },
-                        );
+                        send_get_data(addr_from.as_str(), OpType::Tx, txid);
                     }
                 }
             },
-            Package::Tx { transaction } => {
+            Package::Tx {
+                addr_from,
+                transaction,
+            } => {
                 // 记录交易到内存池
                 let tx = Transaction::deserialize(transaction.as_slice());
                 let txid = tx.get_id_bytes();
@@ -223,16 +274,10 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                         if node_addr.eq(node.get_addr().as_str()) {
                             continue;
                         }
-                        if peer_addr.to_string().eq(node.get_addr().as_str()) {
+                        if addr_from.eq(node.get_addr().as_str()) {
                             continue;
                         }
-                        send_data(
-                            node.parse_socket_addr(),
-                            Package::Inv {
-                                op_type: OpType::Tx,
-                                items: vec![txid.clone()],
-                            },
-                        );
+                        send_inv(node.get_addr().as_str(), OpType::Tx, &vec![txid.clone()])
                     }
                 }
                 // 矿工节点（内存池中的交易到达一定数量，挖出新区块）
@@ -260,33 +305,26 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                         if node_addr.eq(node.get_addr().as_str()) {
                             continue;
                         }
-                        send_data(
-                            node.parse_socket_addr(),
-                            Package::Inv {
-                                op_type: OpType::Block,
-                                items: vec![new_block.get_hash_bytes()],
-                            },
-                        )
+                        send_inv(
+                            node.get_addr().as_str(),
+                            OpType::Block,
+                            &vec![new_block.get_hash_bytes()],
+                        );
                     }
                 }
             }
             Package::Version {
+                addr_from,
                 version,
                 best_height,
             } => {
                 info!("version = {}, best_height = {}", version, best_height);
                 let local_best_height = blockchain.get_best_height();
                 if local_best_height < best_height {
-                    send_data(peer_addr, Package::GetBlocks);
+                    send_get_blocks(addr_from.as_str());
                 }
                 if local_best_height > best_height {
-                    send_data(
-                        peer_addr,
-                        Package::Version {
-                            version: NODE_VERSION,
-                            best_height: blockchain.get_best_height(),
-                        },
-                    )
+                    send_version(addr_from.as_str(), blockchain.get_best_height());
                 }
                 // 记录节点地址
                 if GLOBAL_NODES.node_is_known(peer_addr.to_string().as_str()) == false {
@@ -300,7 +338,7 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
 }
 
 /// 统一发送请求
-pub fn send_data(addr: SocketAddr, pkg: Package) {
+fn send_data(addr: SocketAddr, pkg: Package) {
     info!("send package: {:?}", &pkg);
     let stream = TcpStream::connect(addr);
     if stream.is_err() {
@@ -318,7 +356,6 @@ pub fn send_data(addr: SocketAddr, pkg: Package) {
 #[cfg(test)]
 mod tests {
     use super::Server;
-    use crate::server::{send_data, Package};
     use crate::Blockchain;
 
     #[test]
@@ -326,10 +363,5 @@ mod tests {
         let blockchain = Blockchain::create_blockchain("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
         let server = Server::new(blockchain);
         server.run("127.0.0.1:2001");
-    }
-
-    #[test]
-    fn test_send_data() {
-        send_data("127.0.0.1:2001".parse().unwrap(), Package::GetBlocks);
     }
 }

@@ -1,5 +1,5 @@
 use blockchain_rust::{
-    convert_address, hash_pub_key, send_data, utils, validate_address, Blockchain, Package, Server,
+    convert_address, hash_pub_key, send_tx, utils, validate_address, Blockchain, Server,
     Transaction, UTXOSet, Wallets, ADDRESS_CHECK_SUM_LEN, CENTERAL_NODE, GLOBAL_CONFIG,
 };
 use data_encoding::HEXLOWER;
@@ -19,7 +19,10 @@ struct Opt {
 #[derive(StructOpt, Debug)]
 enum Command {
     #[structopt(name = "createblockchain", about = "Create a new blockchain")]
-    Createblockchain,
+    Createblockchain {
+        #[structopt(name = "address", help = "The address to send genesis block reward to")]
+        address: String,
+    },
     #[structopt(name = "createwallet", about = "Create a new wallet")]
     Createwallet,
     #[structopt(
@@ -58,8 +61,8 @@ fn main() {
     env_logger::builder().filter_level(LevelFilter::Info).init();
     let opt = Opt::from_args();
     match opt.command {
-        Command::Createblockchain => {
-            let blockchain = Blockchain::create_blockchain();
+        Command::Createblockchain { address } => {
+            let blockchain = Blockchain::create_blockchain(address.as_str());
             let utxo_set = UTXOSet::new(blockchain);
             utxo_set.reindex();
             println!("Done!");
@@ -118,13 +121,7 @@ fn main() {
                 // 更新 UTXO 集
                 utxo_set.update(&block);
             } else {
-                let socket_addr = CENTERAL_NODE.parse().unwrap();
-                send_data(
-                    socket_addr,
-                    Package::Tx {
-                        transaction: transaction.serialize(),
-                    },
-                );
+                send_tx(CENTERAL_NODE, &transaction);
             }
             println!("Success!")
         }

@@ -6,6 +6,7 @@ fn client_createblockchain() {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .arg("createblockchain")
+        .arg("1HvuWmqQrmjFGD8joWhv9ZfU1BYipM2iWZ")
         .assert()
         .success();
 }
@@ -36,7 +37,7 @@ fn client_get_balance() {
     let command = Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .arg("getbalance")
-        .arg("1Mr2LYb7XcbKe2Ck9po5zZi69SEnAK7Wk6")
+        .arg("1HvuWmqQrmjFGD8joWhv9ZfU1BYipM2iWZ")
         .assert()
         .success();
 
@@ -49,9 +50,10 @@ fn client_send() {
     Command::cargo_bin(env!("CARGO_PKG_NAME"))
         .unwrap()
         .arg("send")
-        .arg("1Mr2LYb7XcbKe2Ck9po5zZi69SEnAK7Wk6")
-        .arg("1C2mcxwiNmDs6RfagFiPNgSo9KQoi4oguY")
+        .arg("1HvuWmqQrmjFGD8joWhv9ZfU1BYipM2iWZ")
+        .arg("1NsavE9u2qSTzJCmMMZVKHfGsAAAE36XYo")
         .arg("5")
+        .arg("0")
         .assert()
         .success();
 }

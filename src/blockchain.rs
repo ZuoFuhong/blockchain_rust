@@ -1,5 +1,5 @@
 use crate::transaction::TXOutput;
-use crate::{Block, Transaction, Wallets};
+use crate::{Block, Transaction};
 use data_encoding::HEXLOWER;
 use sled::transaction::TransactionResult;
 use sled::{Db, Tree};
@@ -18,18 +18,14 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// 创建新的区块链
-    pub fn create_blockchain() -> Blockchain {
+    pub fn create_blockchain(genesis_address: &str) -> Blockchain {
         let db = sled::open(current_dir().unwrap().join("data")).unwrap();
         let blocks_tree = db.open_tree(BLOCKS_TREE).unwrap();
 
         let data = blocks_tree.get(TIP_BLOCK_HASH_KEY).unwrap();
         let tip_hash;
         if data.is_none() {
-            // 创世块的钱包
-            let mut wallets = Wallets::new();
-            let genesis_address = wallets.create_wallet();
-
-            let coinbase_tx = Transaction::new_coinbase_tx(genesis_address.as_str());
+            let coinbase_tx = Transaction::new_coinbase_tx(genesis_address);
             let block = Block::generate_genesis_block(&coinbase_tx);
             Self::update_blocks_tree(&blocks_tree, &block);
             tip_hash = String::from(block.get_hash());
@@ -258,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_create_blockchain() {
-        let _ = super::Blockchain::create_blockchain();
+        let _ = super::Blockchain::create_blockchain("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
     }
 
     #[test]
