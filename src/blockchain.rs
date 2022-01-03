@@ -180,10 +180,10 @@ impl Blockchain {
             let tip_block = Block::deserialize(tip_block_bytes.as_ref());
             if block.get_height() > tip_block.get_height() {
                 let _ = tx_db.insert(TIP_BLOCK_HASH_KEY, block.get_hash()).unwrap();
+                self.set_tip_hash(block.get_hash());
             }
             Ok(())
         });
-        self.set_tip_hash(block.get_hash());
     }
 
     /// 获取最新区块在链中的高度

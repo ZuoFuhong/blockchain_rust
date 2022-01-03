@@ -109,7 +109,7 @@ pub enum Package {
     },
 }
 
-fn send_get_data(addr: &str, op_type: OpType, block_hash: &[u8]) {
+fn send_get_data(addr: &str, op_type: OpType, id: &[u8]) {
     let socket_addr = addr.parse().unwrap();
     let node_addr = GLOBAL_CONFIG.get_node_addr().parse().unwrap();
     send_data(
@@ -117,7 +117,7 @@ fn send_get_data(addr: &str, op_type: OpType, block_hash: &[u8]) {
         Package::GetData {
             addr_from: node_addr,
             op_type,
-            id: block_hash.to_vec(),
+            id: id.to_vec(),
         },
     );
 }
@@ -328,7 +328,7 @@ fn serve(blockchain: Blockchain, stream: TcpStream) -> Result<(), Box<dyn Error>
                 }
                 // 记录节点地址
                 if GLOBAL_NODES.node_is_known(peer_addr.to_string().as_str()) == false {
-                    GLOBAL_NODES.add_node(peer_addr.to_string());
+                    GLOBAL_NODES.add_node(addr_from);
                 }
             }
         }
@@ -355,13 +355,29 @@ fn send_data(addr: SocketAddr, pkg: Package) {
 
 #[cfg(test)]
 mod tests {
-    use super::Server;
-    use crate::Blockchain;
+    use crate::server::{send_get_data, OpType};
+    use data_encoding::HEXLOWER;
 
     #[test]
-    fn test_new_server() {
-        let blockchain = Blockchain::create_blockchain("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
-        let server = Server::new(blockchain);
-        server.run("127.0.0.1:2001");
+    fn test_send_get_block() {
+        send_get_data(
+            "127.0.0.1:2001",
+            OpType::Block,
+            "00f95a9ca28526e95e94f2eda7d3c6559f41a30b184991d5ccc036de7b134408".as_bytes(),
+        );
+    }
+
+    #[test]
+    fn test_send_get_transaction() {
+        let txid = HEXLOWER
+            .decode("164651291115cbf132f6c3e2a9729a84b0eb29da4481b7dfcd1e1b9e708cb6fa".as_bytes())
+            .unwrap();
+        send_get_data("127.0.0.1:2001", OpType::Tx, &txid);
+    }
+
+    #[test]
+    fn test_vec() {
+        let a = vec![6, 1, 2, 3, 5, 4];
+        println!("{:?}", a);
     }
 }

@@ -53,7 +53,7 @@ enum Command {
     #[structopt(name = "startnode", about = "Start a node")]
     StartNode {
         #[structopt(name = "miner", help = "Enable mining mode and send reward to ADDRESS")]
-        miner: String,
+        miner: Option<String>,
     },
 }
 
@@ -170,14 +170,13 @@ fn main() {
             println!("Done! There are {} transactions in the UTXO set.", count);
         }
         Command::StartNode { miner } => {
-            if miner.len() > 0 {
-                if validate_address(miner.as_str()) == false {
+            if let Some(addr) = miner {
+                if validate_address(addr.as_str()) == false {
                     panic!("Wrong miner address!")
                 }
-                println!("Mining is on. Address to receive rewards: {}", miner)
+                println!("Mining is on. Address to receive rewards: {}", addr);
+                GLOBAL_CONFIG.set_mining_addr(addr);
             }
-            GLOBAL_CONFIG.set_mining_addr(miner);
-
             let blockchain = Blockchain::new_blockchain();
             let sockert_addr = GLOBAL_CONFIG.get_node_addr();
             Server::new(blockchain).run(sockert_addr.as_str());
